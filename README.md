@@ -1,20 +1,35 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# ScriptBlox Bot Control Panel & Dashboard
 
-# Run and deploy your AI Studio app
+A full-stack application featuring a React dashboard to control a ScriptBlox automation bot and manage accounts/emails.
 
-This contains everything you need to run your app locally.
+## 🚀 Features
+- **Admin Dashboard**: Manage products, orders, and configuration.
+- **Bot Control**: Start/Stop automation loops on remote devices via Socket.io.
+- **Shop**: Crypto-powered checkout for premium assets.
+- **Mailbox**: Manage and view emails/OTPs for automated accounts.
+- **Automation**: Human-like bot built with `puppeteer-real-browser`.
 
-View your app in AI Studio: https://ai.studio/apps/8e0fbb14-1900-42d3-befe-fcf675dd229d
+## 🛠️ Setup
 
-## Run Locally
+1. **GitHub Upload**:
+   - Upload all contents of this folder directly to a **Private** GitHub repository.
+   
+2. **Deployment (Render.com)**:
+   - Create a new **Web Service**.
+   - Connect your GitHub repository.
+   - **Environment**: Node.js
+   - **Build Command**: `npm run build`
+   - **Start Command**: `npm run start` (or `tsx server.ts`)
 
-**Prerequisites:**  Node.js
+3. **Environment Variables**:
+   Copy `.env.example` to the "Environment Variables" section on Render and fill in:
+   - `MONGO_URI`: Your MongoDB Atlas connection string.
+   - `API_SECRET_KEY`: A secure key for bot authentication.
+   - `ADMIN_EMAIL`: Your email to grant admin access.
+   - `PROXY_HOST`, `PROXY_USER`, `PROXY_PASS`: Your proxy credentials for the bot.
 
+## 🤖 Running the Bot
+Once the server is live, anyone running the `bot.cjs` script with the correct `SERVER_URL` and `API_SECRET_KEY` will connect to your dashboard.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+---
+*Created with Prime X Hub Technology*

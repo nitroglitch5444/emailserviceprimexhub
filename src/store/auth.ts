@@ -1,26 +1,24 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 
 interface AuthState {
   token: string | null;
-  user: {
-    id: string;
-    username: string;
-    email: string;
-    isAdmin: boolean;
-  } | null;
-  setAuth: (token: string, user: any) => void;
+  user: any | null;
+  initialized: boolean;
+  setAuth: (token: string | null, user: any | null) => void;
   logout: () => void;
 }
 
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set) => ({
-      token: null,
-      user: null,
-      setAuth: (token, user) => set({ token, user }),
-      logout: () => set({ token: null, user: null }),
-    }),
-    { name: 'nexus-auth' }
-  )
-);
+export const useAuthStore = create<AuthState>((set) => ({
+  token: localStorage.getItem('token'),
+  user: null,
+  initialized: false,
+  setAuth: (token, user) => {
+    if (token) localStorage.setItem('token', token);
+    else localStorage.removeItem('token');
+    set({ token, user, initialized: true });
+  },
+  logout: () => {
+    localStorage.removeItem('token');
+    set({ token: null, user: null });
+  }
+}));

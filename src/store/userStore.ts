@@ -2,18 +2,18 @@ import { create } from 'zustand';
 
 interface UserState {
   emails: any[];
-  users: any[];
   aliases: any[];
-  setEmails: (data: any[]) => void;
-  setUsers: (data: any[]) => void;
-  setAliases: (data: any[]) => void;
+  users: any[];
+  setEmails: (emails: any[]) => void;
+  setAliases: (aliases: any[]) => void;
+  setUsers: (users: any[]) => void;
 }
 
 export const useUserStore = create<UserState>((set) => ({
   emails: [],
-  users: [],
   aliases: [],
-  setEmails: (data) => set({ emails: data }),
-  setUsers: (data) => set({ users: data }),
-  setAliases: (data) => set({ aliases: data }),
+  users: [],
+  setEmails: (emails) => set({ emails }),
+  setAliases: (aliases) => set({ aliases }),
+  setUsers: (users) => set({ users }),
 }));
