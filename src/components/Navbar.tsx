@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { ShoppingCart, User, LogOut, ShieldAlert, Package, Mail } from 'lucide-react';
+import { ShoppingCart, User, LogOut, ShieldAlert, Package, Mail, Layout } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { useCartStore } from '../store/cart';
 
@@ -45,10 +45,16 @@ export default function Navbar() {
             {user ? (
               <div className="flex items-center gap-4">
                 {user.isAdmin ? (
-                  <Link to="/admin" className="text-neon-orange hover:text-white transition-colors flex items-center gap-1 hover:scale-105 transform duration-200">
-                    <ShieldAlert className="w-5 h-5" />
-                    <span className="hidden sm:inline text-sm font-medium">Admin</span>
-                  </Link>
+                  <>
+                    <Link to="/panel" className="text-accent-primary hover:text-white transition-colors flex items-center gap-1 hover:scale-105 transform duration-200">
+                      <Layout className="w-5 h-5" />
+                      <span className="hidden sm:inline text-sm font-medium">Panel</span>
+                    </Link>
+                    <Link to="/admin" className="text-neon-orange hover:text-white transition-colors flex items-center gap-1 hover:scale-105 transform duration-200">
+                      <ShieldAlert className="w-5 h-5" />
+                      <span className="hidden sm:inline text-sm font-medium">Admin</span>
+                    </Link>
+                  </>
                 ) : (
                   <Link to="/emails" className="text-neon-green hover:text-white transition-colors flex items-center gap-1 hover:scale-105 transform duration-200">
                     <Mail className="w-5 h-5" />

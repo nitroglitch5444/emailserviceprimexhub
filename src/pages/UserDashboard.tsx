@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Mail, Trash2, Copy, Power, RefreshCw, CheckCircle2, AlertCircle, ArrowLeft, UserCircle2, Menu, X, Database, Send, RotateCcw } from 'lucide-react';
+import { Mail, Trash2, Copy, Power, RefreshCw, CheckCircle2, AlertCircle, ArrowLeft, UserCircle2, Menu, X, Database, Send, RotateCcw, Clock, User } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -50,15 +50,15 @@ type User = {
 export default function UserDashboard() {
   const { user, token } = useAuthStore();
   const navigate = useNavigate();
-  const [activeTab, setActiveTabState] = useState<'inbox' | 'trash' | 'aliases' | 'restore'>(() => {
+  const [activeTab, setActiveTabState] = useState<'inbox' | 'trash' | 'aliases' | 'restore' | 'assigned'>(() => {
     const hash = window.location.hash.replace('#', '');
     if (hash === 'live-otp') return 'inbox';
-    return ['inbox', 'trash', 'aliases', 'restore'].includes(hash) ? (hash as any) : 'inbox';
+    return ['inbox', 'trash', 'aliases', 'restore', 'assigned'].includes(hash) ? (hash as any) : 'inbox';
   });
 
   const [liveMode, setLiveMode] = useState(() => window.location.hash === '#live-otp');
 
-  const setActiveTab = (tab: 'inbox' | 'trash' | 'aliases' | 'restore') => {
+  const setActiveTab = (tab: 'inbox' | 'trash' | 'aliases' | 'restore' | 'assigned') => {
     setActiveTabState(tab);
     setLiveMode(false);
     window.location.hash = tab;
@@ -79,7 +79,7 @@ export default function UserDashboard() {
       if (hash === 'live-otp') {
         setLiveMode(true);
         setActiveTabState('inbox');
-      } else if (['inbox', 'trash', 'aliases', 'restore'].includes(hash)) {
+      } else if (['inbox', 'trash', 'aliases', 'restore', 'assigned'].includes(hash)) {
         setLiveMode(false);
         setActiveTabState(hash as any);
       }
@@ -87,6 +87,24 @@ export default function UserDashboard() {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
+
+  const [stats, setStats] = useState<any>(null);
+
+  const fetchStats = async () => {
+    if (!token || !user?.isAdmin) return;
+    try {
+      const res = await fetch('/api/admin/stats/emails', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) setStats(await res.json());
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    fetchStats();
+    const interval = setInterval(fetchStats, 10000);
+    return () => clearInterval(interval);
+  }, [token, user]);
   
   const { emails, users, aliases, setEmails, setUsers } = useUserStore();
   
@@ -499,6 +517,22 @@ export default function UserDashboard() {
             <Database className="w-4 h-4" />
             Email IDs
           </button>
+
+          <button
+            onClick={() => { setActiveTab('assigned'); setSelectedEmail(null); setIsSidebarOpen(false); }}
+            className={cn(
+              "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
+              activeTab === 'assigned' ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "text-gray-400 hover:bg-white/5 hover:text-white border border-transparent"
+            )}
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            Assigned
+            {aliases.filter(a => a.status === 'assigned').length > 0 && (
+              <span className="ml-auto bg-emerald-500/20 text-emerald-400 py-0.5 px-2 rounded-full text-xs font-bold">
+                {aliases.filter(a => a.status === 'assigned').length}
+              </span>
+            )}
+          </button>
           
           <button
             onClick={() => { setActiveTab('restore'); setSelectedEmail(null); setIsSidebarOpen(false); }}
@@ -797,19 +831,19 @@ export default function UserDashboard() {
               {activeTab === 'aliases' && (
                 <div className="glass-panel overflow-hidden">
                   <div className="p-6 border-b border-premium-border flex justify-between items-center">
-                    <h3 className="text-xl font-bold text-white tracking-tight">Email IDs</h3>
+                    <h3 className="text-xl font-bold text-white tracking-tight">Email IDs (Unassigned)</h3>
                   </div>
                   <div className="divide-y divide-premium-border">
-                    {aliases.filter(a => !a.isDeleted).length === 0 && !loading && !error ? (
+                    {aliases.filter(a => !a.isDeleted && a.status !== 'assigned').length === 0 && !loading && !error ? (
                       <div className="text-center py-32">
                         <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6 border border-premium-border">
                           <Database className="w-10 h-10 text-gray-500" />
                         </div>
-                        <h3 className="text-xl font-bold text-white tracking-tight">No Email IDs found</h3>
-                        <p className="text-gray-400 mt-2 font-medium">You don't have any email IDs yet.</p>
+                        <h3 className="text-xl font-bold text-white tracking-tight">No Unassigned Email IDs</h3>
+                        <p className="text-gray-400 mt-2 font-medium">All emails are currently assigned or deleted.</p>
                       </div>
                     ) : (
-                      aliases.filter(a => !a.isDeleted).map((alias) => {
+                      aliases.filter(a => !a.isDeleted && a.status !== 'assigned').map((alias) => {
                         const timer = getTimerDisplay(alias.createdAt);
                         return (
                           <div key={alias._id} className="p-4 md:p-6 hover:bg-white/5 transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -938,6 +972,54 @@ export default function UserDashboard() {
                                 Restore
                               </button>
                             </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'assigned' && (
+                <div className="glass-panel overflow-hidden">
+                  <div className="p-6 border-b border-premium-border flex justify-between items-center">
+                    <h3 className="text-xl font-bold text-white tracking-tight">Assigned Emails</h3>
+                  </div>
+                  <div className="divide-y divide-premium-border">
+                    {aliases.filter(a => a.status === 'assigned').length === 0 && !loading && !error ? (
+                      <div className="text-center py-32">
+                        <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6 border border-premium-border">
+                          <CheckCircle2 className="w-10 h-10 text-gray-500" />
+                        </div>
+                        <h3 className="text-xl font-bold text-white tracking-tight">No Assigned Emails</h3>
+                        <p className="text-gray-400 mt-2 font-medium">Emails assigned to players will appear here.</p>
+                      </div>
+                    ) : (
+                      aliases.filter(a => a.status === 'assigned').map((alias) => {
+                        const timer = getTimerDisplay(alias.createdAt);
+                        return (
+                          <div key={alias._id} className="p-4 md:p-6 hover:bg-white/5 transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                            <div className="min-w-0 w-full sm:flex-1">
+                              <div className="flex items-center gap-3 mb-1">
+                                <span className="text-white font-bold truncate text-base">{alias.alias}</span>
+                                <span className="bg-emerald-500/10 text-emerald-400 text-[10px] px-2 py-0.5 rounded font-black border border-emerald-500/20 uppercase tracking-widest">ASSIGNED</span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 font-medium">
+                                <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Expires in {timer}</span>
+                                <span className="flex items-center gap-1.5">
+                                  <User className="w-3.5 h-3.5" /> 
+                                  Player: <span className="text-emerald-400">{users.find(u => u._id === alias.assignedTo)?.username || 'Unknown'}</span>
+                                </span>
+                              </div>
+                            </div>
+                            {user?.isAdmin && (
+                              <button 
+                                onClick={() => assignEmail(alias.alias, '')}
+                                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg text-xs font-bold border border-premium-border transition-all active:scale-95"
+                              >
+                                Unassign Email
+                              </button>
+                            )}
                           </div>
                         );
                       })

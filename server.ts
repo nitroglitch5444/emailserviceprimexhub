@@ -97,6 +97,28 @@ async function initConfig() {
 }
 mongoose.connection.once('open', initConfig);
 
+const botSchema = new mongoose.Schema({
+  hwid: { type: String, required: true, unique: true },
+  name: { type: String, default: 'New Bot' },
+  status: { type: String, enum: ['online', 'offline'], default: 'offline' },
+  lastSeen: { type: Date, default: Date.now },
+  mode: { type: String, enum: ['email_create', 'upload'], default: 'email_create' },
+  subMode: { type: String, enum: ['stocking', 'admin'], default: 'stocking' },
+  limits: {
+    emailsCount: { type: Number, default: 10 },
+    timeMinutes: { type: Number, default: 60 }
+  },
+  stats: {
+    success: { type: Number, default: 0 },
+    fail: { type: Number, default: 0 }
+  },
+  logs: [{
+    message: String,
+    timestamp: { type: Date, default: Date.now }
+  }]
+});
+const Bot = mongoose.model('Bot', botSchema);
+
 // --- Middleware ---
 const authenticateToken = (req: any, res: any, next: any) => {
   const authHeader = req.headers['authorization'];
@@ -140,6 +162,68 @@ async function startServer() {
     }
     next();
   });
+
+  // --- Admin Bot Routes ---
+  app.get('/api/admin/bots', authenticateToken, isAdmin, async (req, res) => {
+    try {
+      const bots = await Bot.find().sort({ lastSeen: -1 });
+      res.json(bots);
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to fetch bots' });
+    }
+  });
+
+  app.post('/api/admin/bots/update', authenticateToken, isAdmin, async (req, res) => {
+    try {
+      const { hwid, name, mode, subMode, limits } = req.body;
+      const bot = await Bot.findOneAndUpdate(
+        { hwid },
+        { name, mode, subMode, limits },
+        { new: true }
+      );
+      res.json(bot);
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to update bot' });
+    }
+  });
+
+  // --- Public Bot Routes (Used by toolbox.js) ---
+  app.post('/api/bot/check-in', async (req, res) => {
+    try {
+      const { hwid, logs, stats } = req.body;
+      
+      // Update bot status to online and set lastSeen
+      const bot = await Bot.findOneAndUpdate(
+        { hwid },
+        { 
+          status: 'online', 
+          lastSeen: Date.now(),
+          $push: { logs: { $each: logs || [], $slice: -50 } }, // Keep last 50 logs
+          stats
+        },
+        { upsert: true, new: true }
+      );
+      
+      res.json({
+        mode: bot.mode,
+        subMode: bot.subMode,
+        limits: bot.limits,
+        success: bot.stats.success,
+        fail: bot.stats.fail
+      });
+    } catch (err) {
+      res.status(500).json({ error: 'Bot check-in failed' });
+    }
+  });
+
+  // Check and set bots to offline if not seen for 2 minutes
+  setInterval(async () => {
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+    await Bot.updateMany(
+      { lastSeen: { $lt: twoMinutesAgo }, status: 'online' },
+      { status: 'offline' }
+    );
+  }, 60000);
 
   // --- Auth Routes ---
   app.post('/api/auth/register', async (req, res) => {
@@ -221,6 +305,51 @@ async function startServer() {
       res.json({ user });
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  app.post('/api/admin/assign-email', authenticateToken, isAdmin, async (req, res) => {
+    try {
+      const { alias, userId } = req.body;
+      
+      const emailAlias = await EmailAlias.findOne({ alias });
+      if (!emailAlias) return res.status(404).json({ error: 'Alias not found' });
+      
+      if (!userId) {
+        // Unassigning
+        emailAlias.assignedTo = null;
+        emailAlias.status = 'admin'; // Default back to admin if unassigned
+        await emailAlias.save();
+        await Email.updateMany({ recipientAlias: alias }, { $set: { assignedTo: null, status: 'admin' } });
+      } else {
+        // Assigning to someone
+        emailAlias.assignedTo = userId;
+        emailAlias.status = 'assigned';
+        await emailAlias.save();
+        await Email.updateMany({ recipientAlias: alias }, { $set: { assignedTo: userId, status: 'sold' } });
+      }
+      
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to assign email' });
+    }
+  });
+
+  app.get('/api/admin/stats/emails', authenticateToken, isAdmin, async (req, res) => {
+    try {
+      const now = new Date();
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      const stats = {
+        admin: await EmailAlias.countDocuments({ status: 'admin' }),
+        adminAged: await EmailAlias.countDocuments({ status: 'admin', createdAt: { $lt: sevenDaysAgo } }),
+        stocking: await EmailAlias.countDocuments({ status: 'stocking' }),
+        stockingAged: await EmailAlias.countDocuments({ status: 'stocking', createdAt: { $lt: sevenDaysAgo } }),
+        assigned: await EmailAlias.countDocuments({ status: 'assigned' })
+      };
+      res.json(stats);
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to fetch email stats' });
     }
   });
 

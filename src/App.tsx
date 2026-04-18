@@ -7,6 +7,7 @@ import Auth from './pages/Auth';
 import Checkout from './pages/Checkout';
 import UserDashboard from './pages/UserDashboard';
 import AdminDashboard from './pages/AdminDashboard';
+import BotPanel from './pages/BotPanel';
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
             <Route path="/checkout" element={<Checkout />} />
             <Route path="/emails" element={<UserDashboard />} />
             <Route path="/admin" element={<AdminDashboard />} />
+            <Route path="/panel" element={<BotPanel />} />
             <Route path="*" element={
               <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
                 <h1 className="text-6xl font-bold text-accent-primary mb-4">404</h1>
