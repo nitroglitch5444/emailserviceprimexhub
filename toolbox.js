@@ -48,19 +48,26 @@ class ScriptBloxBot {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     hwid: this.HWID,
+                    name: os.hostname(),
                     logs: this.logs,
                     stats: this.stats,
-                    isRunning: this.sessionActive, // Report if session should be active
+                    isRunning: this.sessionActive,
                     completedCycles: this.completedCount
                 })
             });
+            if (!res.ok) {
+                const errorText = await res.text();
+                console.log(`⚠️ Server Error: ${res.status} - ${errorText}`);
+                return null;
+            }
             const data = await res.json();
-            this.logs = []; // Clear local logs once sent
+            this.logs = []; 
             this.sessionActive = data.isRunning;
             this.taskQueue = data.queue || [];
             return data;
         } catch (e) {
-            console.log("⚠️ Connection Error while checking in with Panel.");
+            console.log(`⚠️ Connection Error: ${e.message}`);
+            console.log(`Attempted URL: ${this.SERVER_URL}/api/bot/check-in`);
             return null;
         }
     }

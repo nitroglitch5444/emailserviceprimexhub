@@ -232,11 +232,11 @@ async function startServer() {
         updateData.isRunning = isRunning;
       }
 
+      // Remove the check for existing bot to allow auto-registration on first check-in
       const botCheck = await Bot.findOne({ hwid });
-      if (!botCheck) return res.status(404).json({ error: 'Bot not found' });
 
       // Server-side limits enforcement
-      if (botCheck.isRunning) {
+      if (botCheck && botCheck.isRunning) {
         // 1. Count Limit
         if (completedCycles >= botCheck.limits.emailsCount) {
           updateData.isRunning = false;
