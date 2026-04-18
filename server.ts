@@ -129,8 +129,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '5MB' }));
-  app.use(express.urlencoded({ limit: '5MB', extended: true }));
+  app.use(express.json({ limit: '25MB' }));
+  app.use(express.urlencoded({ limit: '25MB', extended: true }));
   app.use(cookieParser());
 
   // Middleware to normalize double slashes in URLs

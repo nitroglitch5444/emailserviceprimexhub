@@ -55,7 +55,19 @@ export default function AdminDashboard() {
         const res = await fetch(`/api/admin/emails?mode=admin&limit=${activeEmailLimit}`, { headers, cache: 'no-store' });
         const data = await res.json();
         setHasMoreEmails(data.length >= activeEmailLimit);
-        if (JSON.stringify(state.emails) !== JSON.stringify(data)) setEmails(data);
+        
+        // SMART MERGE: Add new emails, update existing ones, keep the rest
+        const map = new Map();
+        state.emails.forEach((e: any) => map.set(e._id, e));
+        data.forEach((e: any) => map.set(e._id, e));
+        
+        const merged = Array.from(map.values()).sort((a: any, b: any) => 
+          new Date(b.receivedAt || b.timestamp).getTime() - new Date(a.receivedAt || a.timestamp).getTime()
+        );
+
+        if (JSON.stringify(state.emails) !== JSON.stringify(merged)) {
+          setEmails(merged);
+        }
       } else if (activeTab === 'stocking') {
         const resAliases = await fetch('/api/admin/aliases', { headers, cache: 'no-store' });
         const dataAliases = await resAliases.json();

@@ -110,10 +110,7 @@ export default function UserDashboard() {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
   const fetchEmails = useCallback(async (isInitial = false, currentLimit?: number) => {
-    if (!token) {
-      console.log('[FRONTEND EMAIL FETCH] No token found, skipping fetch.');
-      return;
-    }
+    if (!token) return;
     try {
       const activeLimit = currentLimit || emailLimit;
       const currentEmails = useUserStore.getState().emails;
@@ -121,7 +118,6 @@ export default function UserDashboard() {
       if (isInitial && currentEmails.length === 0) setLoading(true);
       
       const endpoint = `/api/my-emails?limit=${activeLimit}`;
-      
       const res = await fetch(endpoint, {
         headers: { 'Authorization': `Bearer ${token}` },
         cache: 'no-store'
@@ -129,54 +125,48 @@ export default function UserDashboard() {
       
       if (!res.ok) throw new Error(`Failed to fetch emails. Status: ${res.status}`);
       
-      const data = await res.json();
+      const newData = await res.json();
       setLastUpdated(new Date());
-      
-      // Check if we have more emails
-      if (data.length < activeLimit) {
-        setHasMore(false);
-      } else {
-        setHasMore(true);
-      }
-      
-      if (data.length > 0) {
-        const latestId = data[0]._id;
-        
-        // Check for new emails and trigger notifications
-        if (lastEmailIdRef.current && lastEmailIdRef.current !== latestId) {
-          const newEmails = [];
-          for (const email of data) {
-            if (email._id === lastEmailIdRef.current) break;
-            newEmails.push(email);
-          }
-          
-          // Show notification for new emails with OTP
-          newEmails.forEach(email => {
-            if (email.otp) {
-              if ('Notification' in window && Notification.permission === 'granted') {
-                new Notification(`OTP: ${email.otp}`, {
-                  body: `For: ${email.recipientAlias}`,
-                });
-              }
-            }
-          });
-        }
-        
-        lastEmailIdRef.current = latestId;
-      }
 
-      // Optimization: Only update if the relevant slice of data actually changed
-      // or if we've loaded more data than before
-      if (currentEmails.length !== data.length || JSON.stringify(currentEmails) !== JSON.stringify(data)) {
-        setEmails(data);
+      if (isInitial) {
+        setEmails(newData);
+        if (newData.length > 0) lastEmailIdRef.current = newData[0]._id;
+        setHasMore(newData.length >= activeLimit);
+      } else {
+        // SMART MERGE: Add new emails, update existing ones, keep the rest
+        if (newData.length > 0) {
+          const map = new Map();
+          // Keep current state first
+          currentEmails.forEach((e: Email) => map.set(e._id, e));
+          // Overwrite/Add with fresh data from server
+          newData.forEach((e: Email) => map.set(e._id, e));
+          
+          const merged = Array.from(map.values()).sort((a: Email, b: Email) => 
+            new Date(b.receivedAt || b.timestamp).getTime() - new Date(a.receivedAt || a.timestamp).getTime()
+          );
+
+          if (JSON.stringify(currentEmails) !== JSON.stringify(merged)) {
+            setEmails(merged);
+            
+            // Check for really new emails for notifications
+            const newLatestId = newData[0]._id;
+            if (newLatestId !== lastEmailIdRef.current) {
+              const reallyNew = newData.filter((n: Email) => !currentEmails.some((o: Email) => o._id === n._id));
+              reallyNew.forEach((email: Email) => {
+                if (email.otp && 'Notification' in window && Notification.permission === 'granted') {
+                  new Notification(`OTP: ${email.otp}`, { body: `For: ${email.recipientAlias}` });
+                }
+              });
+              lastEmailIdRef.current = newLatestId;
+            }
+          }
+        }
       }
       
       setError(null);
     } catch (err) {
-      console.error('[FRONTEND EMAIL FETCH] Error during fetch:', err);
-      if (isInitial) {
-        setError('Failed to connect to the server or database.');
-      }
+      console.error('[FRONTEND EMAIL FETCH] Error:', err);
+      if (isInitial) setError('Failed to connect to the server.');
     } finally {
       if (isInitial) setLoading(false);
     }
@@ -220,7 +210,7 @@ export default function UserDashboard() {
     const interval = setInterval(() => {
       fetchEmails(false);
       fetchAliases();
-    }, 5000); // Polling every 5 seconds instead of 2 to reduce server load
+    }, 2000); // Back to 2s for "instant" feel, safe now due to .lean() optimization
     return () => clearInterval(interval);
   }, [fetchEmails, fetchUsers, fetchAliases]);
 
