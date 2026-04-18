@@ -117,52 +117,31 @@ export default function UserDashboard() {
       
       if (isInitial && currentEmails.length === 0) setLoading(true);
       
-      const endpoint = `/api/my-emails?limit=${activeLimit}`;
-      const res = await fetch(endpoint, {
+      const res = await fetch(`/api/my-emails?limit=${activeLimit}`, {
         headers: { 'Authorization': `Bearer ${token}` },
         cache: 'no-store'
       });
       
-      if (!res.ok) throw new Error(`Failed to fetch emails. Status: ${res.status}`);
+      if (!res.ok) throw new Error(`Failed to fetch emails`);
       
       const newData = await res.json();
       setLastUpdated(new Date());
 
-      if (isInitial) {
-        setEmails(newData);
-        if (newData.length > 0) lastEmailIdRef.current = newData[0]._id;
-        setHasMore(newData.length >= activeLimit);
-      } else {
-        // SMART MERGE: Add new emails, update existing ones, keep the rest
-        if (newData.length > 0) {
-          const map = new Map();
-          // Keep current state first
-          currentEmails.forEach((e: Email) => map.set(e._id, e));
-          // Overwrite/Add with fresh data from server
-          newData.forEach((e: Email) => map.set(e._id, e));
-          
-          const merged = Array.from(map.values()).sort((a: Email, b: Email) => 
-            new Date(b.receivedAt || b.timestamp).getTime() - new Date(a.receivedAt || a.timestamp).getTime()
-          );
-
-          if (JSON.stringify(currentEmails) !== JSON.stringify(merged)) {
-            setEmails(merged);
-            
-            // Check for really new emails for notifications
-            const newLatestId = newData[0]._id;
-            if (newLatestId !== lastEmailIdRef.current) {
-              const reallyNew = newData.filter((n: Email) => !currentEmails.some((o: Email) => o._id === n._id));
-              reallyNew.forEach((email: Email) => {
-                if (email.otp && 'Notification' in window && Notification.permission === 'granted') {
-                  new Notification(`OTP: ${email.otp}`, { body: `For: ${email.recipientAlias}` });
-                }
-              });
-              lastEmailIdRef.current = newLatestId;
-            }
+      // Check for new emails for notifications
+      if (newData.length > 0 && lastEmailIdRef.current && newData[0]._id !== lastEmailIdRef.current) {
+        const reallyNew = newData.filter((n: Email) => !currentEmails.some((o: Email) => o._id === n._id));
+        reallyNew.forEach((email: Email) => {
+          if (email.otp && 'Notification' in window && Notification.permission === 'granted') {
+            new Notification(`OTP: ${email.otp}`, { body: `For: ${email.recipientAlias}` });
           }
-        }
+        });
       }
       
+      if (newData.length > 0) lastEmailIdRef.current = newData[0]._id;
+      
+      // Simple replace - most reliable
+      setEmails(newData);
+      setHasMore(newData.length >= activeLimit);
       setError(null);
     } catch (err) {
       console.error('[FRONTEND EMAIL FETCH] Error:', err);
@@ -170,7 +149,7 @@ export default function UserDashboard() {
     } finally {
       if (isInitial) setLoading(false);
     }
-  }, [token, user, setEmails, emailLimit]);
+  }, [token, setEmails, emailLimit]);
 
   const fetchUsers = useCallback(async () => {
     if (!token || !user?.isAdmin) return;
@@ -328,25 +307,8 @@ export default function UserDashboard() {
     setLoadingMore(false);
   };
 
-  const handleEmailClick = async (email: Email) => {
+  const handleEmailClick = (email: Email) => {
     setSelectedEmail(email);
-    // If htmlBody is missing, fetch the full email content
-    if (!email.htmlBody) {
-      try {
-        const res = await fetch(`/api/my-emails/${email._id}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (res.ok) {
-          const fullEmail = await res.json();
-          setSelectedEmail(fullEmail);
-          // Also update the email in the store so we don't fetch it again
-          const updatedEmails = emails.map(e => e._id === email._id ? fullEmail : e);
-          setEmails(updatedEmails);
-        }
-      } catch (err) {
-        console.error('Failed to fetch full email', err);
-      }
-    }
   };
 
   const handleCopy = (text: string, e?: React.MouseEvent) => {
@@ -737,7 +699,7 @@ export default function UserDashboard() {
                         <p className="text-gray-400 mt-2 font-medium">Waiting for incoming emails...</p>
                       </div>
                     ) : (
-                      emails.filter(e => !aliases.find(a => a.alias === e.recipientAlias)?.isDeleted).map((email) => (
+                      emails.filter(e => user?.isAdmin || !aliases.find(a => a.alias === e.recipientAlias)?.isDeleted).map((email) => (
                         <div 
                           key={email._id} 
                           onClick={() => handleEmailClick(email)}

@@ -329,15 +329,15 @@ async function startServer() {
   // --- User Emails Route ---
   app.get('/api/my-emails', authenticateToken, async (req: any, res) => {
     try {
-      const limit = parseInt(req.query.limit as string) || 10;
+      const limit = parseInt(req.query.limit as string) || 20; // Default to 20 for reliability
       const skip = parseInt(req.query.skip as string) || 0;
 
       let query: any = { assignedTo: req.user.id };
       if (req.user.isAdmin) {
         query = { $or: [{ assignedTo: req.user.id }, { status: 'admin' }, { status: 'pending' }] };
       }
+      
       const emails = await Email.find(query)
-        .select('-htmlBody') // Don't send heavy HTML in list
         .sort({ receivedAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -345,10 +345,12 @@ async function startServer() {
         
       res.json(emails);
     } catch (err) {
+      console.error('[API MY-EMAILS] Error:', err);
       res.status(500).json({ error: 'Server error' });
     }
   });
 
+  // Keep single fetch just in case, but standard list will now have everything
   app.get('/api/my-emails/:id', authenticateToken, async (req: any, res) => {
     try {
       let query: any = { _id: req.params.id, assignedTo: req.user.id };
@@ -527,7 +529,7 @@ async function startServer() {
   app.get('/api/admin/emails', authenticateToken, isAdmin, async (req, res) => {
     try {
       const mode = req.query.mode;
-      const limit = parseInt(req.query.limit as string) || 10;
+      const limit = parseInt(req.query.limit as string) || 20; // Default to 20
       const skip = parseInt(req.query.skip as string) || 0;
 
       let query: any = { status: { $ne: 'sold' } };
@@ -539,7 +541,6 @@ async function startServer() {
       }
       
       const emails = await Email.find(query)
-        .select('-htmlBody') // Don't send heavy HTML in list
         .sort({ receivedAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -547,6 +548,7 @@ async function startServer() {
         
       res.json(emails);
     } catch (err) {
+      console.error('[API ADMIN-EMAILS] Error:', err);
       res.status(500).json({ error: 'Server error' });
     }
   });
@@ -675,10 +677,14 @@ async function startServer() {
         console.log(`[EMAIL WEBHOOK] Found existing EmailAlias for ${to} with status ${aliasDoc.status}`);
         
         if (aliasDoc.isDeleted) {
-          console.log(`[EMAIL WEBHOOK] Alias ${to} is deleted. Incrementing deletedMessageCount and skipping email save.`);
-          aliasDoc.deletedMessageCount = (aliasDoc.deletedMessageCount || 0) + 1;
-          await aliasDoc.save();
-          return res.status(200).json({ success: true, message: 'Email skipped for deleted alias' });
+          if (aliasDoc.status === 'admin') {
+            console.log(`[EMAIL WEBHOOK] Alias ${to} is deleted but status is ADMIN. Saving anyway.`);
+          } else {
+            console.log(`[EMAIL WEBHOOK] Alias ${to} is deleted. Incrementing deletedMessageCount and skipping email save.`);
+            aliasDoc.deletedMessageCount = (aliasDoc.deletedMessageCount || 0) + 1;
+            await aliasDoc.save();
+            return res.status(200).json({ success: true, message: 'Email skipped for deleted alias' });
+          }
         }
 
         // Map alias status to email status
