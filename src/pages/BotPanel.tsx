@@ -35,6 +35,7 @@ interface Bot {
   subMode: 'stocking' | 'admin';
   limits: BotLimit;
   stats: BotStats;
+  taskQueue: any[];
   logs: BotLog[];
 }
 
@@ -267,6 +268,12 @@ export default function BotPanel() {
                     <p className="text-[10px] text-gray-500 uppercase mb-0.5">Fail</p>
                     <p className="text-sm font-bold text-red-500">{selectedBot.stats.fail}</p>
                   </div>
+                  {selectedBot.isRunning && (
+                    <div className="px-4 py-2 bg-accent-primary/10 border border-accent-primary/20 rounded-xl text-center min-w-[80px]">
+                      <p className="text-[10px] text-accent-primary uppercase mb-0.5">Queue</p>
+                      <p className="text-sm font-bold text-accent-primary">{selectedBot.taskQueue?.length || 0}</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -301,15 +308,42 @@ export default function BotPanel() {
                           EMAIL CREATE
                         </button>
                         <button
-                          onClick={() => {}} // Coming soon logic
-                          className="py-2 rounded-lg text-xs font-bold border bg-white/5 border-white/10 text-gray-700 cursor-not-allowed opacity-50"
+                          onClick={() => updateBot(selectedBot.hwid, { mode: 'upload' })}
+                          className={cn(
+                            "py-2 rounded-lg text-xs font-bold border transition-all",
+                            selectedBot.mode === 'upload' ? "bg-accent-primary border-accent-primary text-white" : "bg-white/5 border-white/10 text-gray-500"
+                          )}
                         >
-                          UPLOAD (SOON)
+                          UPLOAD MODE
                         </button>
                       </div>
                     </div>
 
                     <AnimatePresence mode="wait">
+                      {selectedBot.mode === 'upload' && (
+                        <motion.div
+                          key="up-mode"
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: 20 }}
+                          className="space-y-4 pt-4 border-t border-white/5"
+                        >
+                          <div className="p-4 bg-orange-500/10 border border-orange-500/20 rounded-xl">
+                            <h4 className="text-[10px] font-bold text-orange-400 uppercase mb-1">Upload Mode - Beta</h4>
+                            <p className="text-[10px] text-gray-500 leading-relaxed uppercase tracking-tighter">In this mode, the bot will pick USABLE Email IDs and perform bulk operations. Password rules same as cycle.</p>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-gray-500 uppercase block mb-2">Target Emails</label>
+                            <input 
+                              type="number"
+                              value={localLimits.emailsCount}
+                              onChange={(e) => setLocalLimits({...localLimits, emailsCount: parseInt(e.target.value) || 0})}
+                              onBlur={() => updateBot(selectedBot.hwid, { limits: localLimits })}
+                              className="w-full bg-black/50 border border-white/10 rounded-lg py-2 px-3 text-sm focus:border-accent-primary transition-all"
+                            />
+                          </div>
+                        </motion.div>
+                      )}
                       {selectedBot.mode === 'email_create' && (
                         <motion.div
                           key="ec-mode"

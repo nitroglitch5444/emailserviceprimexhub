@@ -60,6 +60,7 @@ const Order = mongoose.model('Order', orderSchema);
 const emailAliasSchema = new mongoose.Schema({
   alias: { type: String, required: true, unique: true },
   status: { type: String, enum: ['admin', 'stocking', 'stocked', 'assigned', 'unassigned'], default: 'stocking' },
+  type: { type: String, enum: ['usable', 'non-usable'], default: 'usable' },
   assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   isDeleted: { type: Boolean, default: false },
   deletedMessageCount: { type: Number, default: 0 },
@@ -113,6 +114,12 @@ const botSchema = new mongoose.Schema({
     success: { type: Number, default: 0 },
     fail: { type: Number, default: 0 }
   },
+  taskQueue: [{
+    password: { type: String },
+    mode: { type: String },
+    subMode: { type: String },
+    createdAt: { type: Date, default: Date.now }
+  }],
   logs: [{
     message: String,
     timestamp: { type: Date, default: Date.now }
@@ -177,9 +184,25 @@ async function startServer() {
   app.post('/api/admin/bots/update', authenticateToken, isAdmin, async (req, res) => {
     try {
       const { hwid, name, mode, subMode, limits, isRunning } = req.body;
+      
+      let update: any = { name, mode, subMode, limits, isRunning };
+      
+      // If we are starting the bot, generate the queue
+      if (isRunning === true) {
+        const count = limits.emailsCount || 10;
+        const password = subMode === 'admin' ? "gonabot@5414" : "user01@g";
+        const taskQueue = [];
+        for (let i = 0; i < count; i++) {
+          taskQueue.push({ password, mode, subMode });
+        }
+        update.taskQueue = taskQueue;
+      } else if (isRunning === false) {
+        update.taskQueue = [];
+      }
+
       const bot = await Bot.findOneAndUpdate(
         { hwid },
-        { name, mode, subMode, limits, isRunning },
+        update,
         { new: true }
       );
       res.json(bot);
@@ -191,7 +214,7 @@ async function startServer() {
   // --- Public Bot Routes (Used by toolbox.js) ---
   app.post('/api/bot/check-in', async (req, res) => {
     try {
-      const { hwid, logs, stats, completedCycles } = req.body;
+      const { hwid, logs, stats, completedCycles, isRunning } = req.body;
       
       const updateData: any = { 
         status: 'online', 
@@ -200,11 +223,22 @@ async function startServer() {
         stats
       };
 
-      // If bot finished its limit, auto-stop it on server
-      const botCheck = await Bot.findOne({ hwid });
-      if (botCheck && botCheck.isRunning && completedCycles >= botCheck.limits.emailsCount) {
-        updateData.isRunning = false;
+      // Allows bot to stop itself via check-in (e.g. on limits)
+      if (isRunning !== undefined) {
+        updateData.isRunning = isRunning;
       }
+
+      const botCheck = await Bot.findOne({ hwid });
+      if (!botCheck) return res.status(404).json({ error: 'Bot not found' });
+
+      // Server-side safety: If bot finished its count limit, auto-stop it 
+      if (botCheck.isRunning && completedCycles >= botCheck.limits.emailsCount) {
+        updateData.isRunning = false;
+        updateData.taskQueue = []; // Clear queue on stop
+      }
+
+      // If bot is running and queue is empty, but we haven't reached limits, we could auto-stop or stay idle.
+      // But the user wants the panel to push the queue.
 
       const bot = await Bot.findOneAndUpdate(
         { hwid },
@@ -212,13 +246,17 @@ async function startServer() {
         { upsert: true, new: true }
       );
       
+      // Get the next 2 tasks (current + buffer)
+      const nextTasks = bot.taskQueue.slice(0, 2);
+
       res.json({
         isRunning: bot.isRunning,
         mode: bot.mode,
         subMode: bot.subMode,
         limits: bot.limits,
         success: bot.stats.success,
-        fail: bot.stats.fail
+        fail: bot.stats.fail,
+        queue: nextTasks
       });
     } catch (err) {
       res.status(500).json({ error: 'Bot check-in failed' });
@@ -233,6 +271,20 @@ async function startServer() {
       { status: 'offline' }
     );
   }, 60000);
+
+  app.post('/api/bot/task-complete', async (req, res) => {
+    try {
+      const { hwid } = req.body;
+      const bot = await Bot.findOneAndUpdate(
+        { hwid },
+        { $pop: { taskQueue: -1 } }, // Remove the first task
+        { new: true }
+      );
+      res.json({ success: true, remaining: bot?.taskQueue.length || 0 });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed' });
+    }
+  });
 
   // --- Auth Routes ---
   app.post('/api/auth/register', async (req, res) => {
@@ -662,6 +714,16 @@ async function startServer() {
     try {
       const aliases = await EmailAlias.find().populate('assignedTo', 'username email').sort({ createdAt: -1 });
       res.json(aliases);
+    } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  app.post('/api/admin/aliases/:id/type', authenticateToken, isAdmin, async (req: any, res) => {
+    try {
+      const { type } = req.body;
+      const alias = await EmailAlias.findByIdAndUpdate(req.params.id, { type }, { new: true });
+      res.json(alias);
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
     }
