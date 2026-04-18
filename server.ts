@@ -105,7 +105,7 @@ const botSchema = new mongoose.Schema({
   lastSeen: { type: Date, default: Date.now },
   isRunning: { type: Boolean, default: false },
   sessionStartedAt: { type: Date, default: null },
-  mode: { type: String, enum: ['email_create', 'upload'], default: 'email_create' },
+  mode: { type: String, enum: ['email_create'], default: 'email_create' },
   subMode: { type: String, enum: ['stocking', 'admin'], default: 'stocking' },
   limits: {
     emailsCount: { type: Number, default: 10 },
@@ -195,20 +195,8 @@ async function startServer() {
         const password = subMode === 'admin' ? "gonabot@5414" : "user01@g";
         const taskQueue = [];
         
-        if (mode === 'upload') {
-          const usableAliases = await EmailAlias.find({ 
-            type: 'usable', 
-            isDeleted: false, 
-            status: { $ne: 'assigned' } 
-          }).limit(count);
-
-          for (const aliasDoc of usableAliases) {
-            taskQueue.push({ password, mode, subMode, alias: aliasDoc.alias });
-          }
-        } else {
-          for (let i = 0; i < count; i++) {
-            taskQueue.push({ password, mode, subMode });
-          }
+        for (let i = 0; i < count; i++) {
+          taskQueue.push({ password, mode, subMode });
         }
         update.taskQueue = taskQueue;
       } else if (isRunning === false) {

@@ -295,63 +295,9 @@ export default function BotPanel() {
                   </div>
 
                   <div className="space-y-4">
-                    <div>
-                      <label className="text-[10px] text-gray-500 uppercase block mb-2">Operation Mode</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          onClick={() => updateBot(selectedBot.hwid, { mode: 'email_create' })}
-                          className={cn(
-                            "py-2 rounded-lg text-xs font-bold border transition-all",
-                            selectedBot.mode === 'email_create' ? "bg-accent-primary border-accent-primary text-white" : "bg-white/5 border-white/10 text-gray-500"
-                          )}
-                        >
-                          EMAIL CREATE
-                        </button>
-                        <button
-                          onClick={() => updateBot(selectedBot.hwid, { mode: 'upload' })}
-                          className={cn(
-                            "py-2 rounded-lg text-xs font-bold border transition-all",
-                            selectedBot.mode === 'upload' ? "bg-accent-primary border-accent-primary text-white" : "bg-white/5 border-white/10 text-gray-500"
-                          )}
-                        >
-                          UPLOAD MODE
-                        </button>
-                      </div>
-                    </div>
-
-                    <AnimatePresence mode="wait">
-                      {selectedBot.mode === 'upload' && (
-                        <motion.div
-                          key="up-mode"
-                          initial={{ opacity: 0, x: -20 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 20 }}
-                          className="space-y-4 pt-4 border-t border-white/5"
-                        >
-                          <div className="p-4 bg-orange-500/10 border border-orange-500/20 rounded-xl">
-                            <h4 className="text-[10px] font-bold text-orange-400 uppercase mb-1">Upload Mode - Beta</h4>
-                            <p className="text-[10px] text-gray-500 leading-relaxed uppercase tracking-tighter">In this mode, the bot will pick USABLE Email IDs and perform bulk operations. Password rules same as cycle.</p>
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase block mb-2">Target Emails</label>
-                            <input 
-                              type="number"
-                              value={localLimits.emailsCount}
-                              onChange={(e) => setLocalLimits({...localLimits, emailsCount: parseInt(e.target.value) || 0})}
-                              onBlur={() => updateBot(selectedBot.hwid, { limits: localLimits })}
-                              className="w-full bg-black/50 border border-white/10 rounded-lg py-2 px-3 text-sm focus:border-accent-primary transition-all"
-                            />
-                          </div>
-                        </motion.div>
-                      )}
-                      {selectedBot.mode === 'email_create' && (
-                        <motion.div
-                          key="ec-mode"
-                          initial={{ opacity: 0, x: -20 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 20 }}
-                          className="space-y-4 pt-4 border-t border-white/5"
-                        >
+                    <div className="space-y-4">
+                      {selectedBot.subMode && (
+                        <div className="space-y-4">
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase block mb-2">Type Selection</label>
                             <div className="grid grid-cols-2 gap-2">
@@ -403,9 +349,9 @@ export default function BotPanel() {
                               />
                             </div>
                           </div>
-                        </motion.div>
+                        </div>
                       )}
-                    </AnimatePresence>
+                    </div>
                   </div>
                 </div>
 

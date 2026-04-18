@@ -16,7 +16,7 @@ const os = require('os');
 
 class ScriptBloxBot {
     constructor() {
-        this.SERVER_URL = "https://ais-dev-uczsg5fiylni2sd23efmm2-181083649851.asia-southeast1.run.app";
+        this.SERVER_URL = "https://primexhub.shop";
         this.HWID = `${os.hostname()}-${os.platform()}-${os.arch()}`;
         this.bravePaths = [
             "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
@@ -25,12 +25,14 @@ class ScriptBloxBot {
         ];
         this.browser = null;
         this.page = null;
-        this.isRunningRemote = false;
         this.taskQueue = [];
         this.currentTask = null;
         this.completedCount = 0;
         this.stats = { success: 0, fail: 0 };
         this.logs = [];
+        this.sessionStartTime = null;
+        this.sessionActive = false;
+        this.isProcessingCycle = false;
     }
 
     addLog(message) {
@@ -48,13 +50,13 @@ class ScriptBloxBot {
                     hwid: this.HWID,
                     logs: this.logs,
                     stats: this.stats,
-                    isRunning: this.isProcessing, // Report if actively working
+                    isRunning: this.sessionActive, // Report if session should be active
                     completedCycles: this.completedCount
                 })
             });
             const data = await res.json();
             this.logs = []; // Clear local logs once sent
-            this.isRunningRemote = data.isRunning;
+            this.sessionActive = data.isRunning;
             this.taskQueue = data.queue || [];
             return data;
         } catch (e) {
@@ -219,20 +221,49 @@ class ScriptBloxBot {
         console.log(`🤖 BOT CONNECTED: ${this.HWID}`);
         console.log(`=========================================\n`);
 
+        let lastStatus = false;
+
         while (true) {
             const botData = await this.checkIn();
-            
-            if (this.isRunningRemote && this.taskQueue.length > 0) {
-                this.isProcessing = true;
-                const workTask = this.taskQueue[0];
-                await this.runCycle(workTask);
-                this.isProcessing = false;
-            } else {
-                if (!this.isRunningRemote) {
-                    process.stdout.write(`\r💤 Idle... Waiting for RUN command from Panel. [${new Date().toLocaleTimeString()}]`);
+            if (!botData) {
+                await new Promise(r => setTimeout(r, 5000));
+                continue;
+            }
+
+            // Sync Running State
+            if (this.sessionActive && !lastStatus) {
+                // Session Started
+                this.sessionStartTime = Date.now();
+                this.addLog("🚀 SESSION STARTED");
+            }
+            lastStatus = this.sessionActive;
+
+            if (this.sessionActive) {
+                // 1. Check Time Limit (Local Backup)
+                if (botData.limits && botData.limits.timeMinutes) {
+                    const elapsedMin = (Date.now() - this.sessionStartTime) / 60000;
+                    if (elapsedMin >= botData.limits.timeMinutes) {
+                        this.addLog(`⏰ Limit reached (Time: ${botData.limits.timeMinutes}m). Stopping session.`);
+                        this.sessionActive = false;
+                        await this.checkIn(); // Report stop
+                        continue;
+                    }
+                }
+
+                // 2. Process Queue
+                if (this.taskQueue.length > 0) {
+                    this.isProcessingCycle = true;
+                    const workTask = this.taskQueue[0];
+                    await this.runCycle(workTask);
+                    this.isProcessingCycle = false;
                 } else {
                     process.stdout.write(`\r⏳ Waiting for Tasks... [${new Date().toLocaleTimeString()}]`);
+                    await new Promise(r => setTimeout(r, 5000));
                 }
+            } else {
+                this.isProcessingCycle = false;
+                this.sessionStartTime = null;
+                process.stdout.write(`\r💤 Idle... Waiting for RUN command from Panel. [${new Date().toLocaleTimeString()}]`);
                 await new Promise(r => setTimeout(r, 5000));
             }
         }
