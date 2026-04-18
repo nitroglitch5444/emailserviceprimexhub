@@ -60,7 +60,6 @@ const Order = mongoose.model('Order', orderSchema);
 const emailAliasSchema = new mongoose.Schema({
   alias: { type: String, required: true, unique: true },
   status: { type: String, enum: ['admin', 'stocking', 'stocked', 'assigned', 'unassigned'], default: 'stocking' },
-  type: { type: String, enum: ['usable', 'non-usable'], default: 'usable' },
   assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   isDeleted: { type: Boolean, default: false },
   deletedMessageCount: { type: Number, default: 0 },
@@ -98,36 +97,6 @@ async function initConfig() {
 }
 mongoose.connection.once('open', initConfig);
 
-const botSchema = new mongoose.Schema({
-  hwid: { type: String, required: true, unique: true },
-  name: { type: String, default: 'New Bot' },
-  status: { type: String, enum: ['online', 'offline'], default: 'offline' },
-  lastSeen: { type: Date, default: Date.now },
-  isRunning: { type: Boolean, default: false },
-  sessionStartedAt: { type: Date, default: null },
-  mode: { type: String, enum: ['email_create'], default: 'email_create' },
-  subMode: { type: String, enum: ['stocking', 'admin'], default: 'stocking' },
-  limits: {
-    emailsCount: { type: Number, default: 10 },
-    timeMinutes: { type: Number, default: 60 }
-  },
-  stats: {
-    success: { type: Number, default: 0 },
-    fail: { type: Number, default: 0 }
-  },
-  taskQueue: [{
-    password: { type: String },
-    mode: { type: String },
-    subMode: { type: String },
-    createdAt: { type: Date, default: Date.now }
-  }],
-  logs: [{
-    message: String,
-    timestamp: { type: Date, default: Date.now }
-  }]
-});
-const Bot = mongoose.model('Bot', botSchema);
-
 // --- Middleware ---
 const authenticateToken = (req: any, res: any, next: any) => {
   const authHeader = req.headers['authorization'];
@@ -160,8 +129,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+  app.use(express.json({ limit: '5MB' }));
+  app.use(express.urlencoded({ limit: '5MB', extended: true }));
   app.use(cookieParser());
 
   // Middleware to normalize double slashes in URLs
@@ -170,136 +139,6 @@ async function startServer() {
       req.url = req.url.replace(/\/+/g, '/');
     }
     next();
-  });
-
-  // --- Admin Bot Routes ---
-  app.get('/api/admin/bots', authenticateToken, isAdmin, async (req, res) => {
-    try {
-      const bots = await Bot.find().sort({ lastSeen: -1 });
-      res.json(bots);
-    } catch (err) {
-      res.status(500).json({ error: 'Failed to fetch bots' });
-    }
-  });
-
-  app.post('/api/admin/bots/update', authenticateToken, isAdmin, async (req, res) => {
-    try {
-      const { hwid, name, mode, subMode, limits, isRunning, logs, stats } = req.body;
-      
-      let update: any = { name, mode, subMode, limits, isRunning };
-      if (logs !== undefined) update.logs = logs;
-      if (stats !== undefined) update.stats = stats;
-      
-      // If we are starting the bot, generate the queue
-      if (isRunning === true) {
-        update.sessionStartedAt = Date.now();
-        const count = limits.emailsCount || 10;
-        const password = subMode === 'admin' ? "gonabot@5414" : "user01@g";
-        const taskQueue = [];
-        
-        for (let i = 0; i < count; i++) {
-          taskQueue.push({ password, mode, subMode });
-        }
-        update.taskQueue = taskQueue;
-      } else if (isRunning === false) {
-        update.taskQueue = [];
-      }
-
-      const bot = await Bot.findOneAndUpdate(
-        { hwid },
-        update,
-        { new: true }
-      );
-      res.json(bot);
-    } catch (err) {
-      res.status(500).json({ error: 'Failed to update bot' });
-    }
-  });
-
-  // --- Public Bot Routes (Used by toolbox.js) ---
-  app.post('/api/bot/check-in', async (req, res) => {
-    try {
-      const { hwid, name, logs, stats, completedCycles, isRunning } = req.body;
-      
-      const updateData: any = { 
-        status: 'online', 
-        name: name || undefined,
-        lastSeen: Date.now(),
-        $push: { logs: { $each: logs || [], $slice: -50 } },
-        stats
-      };
-
-      // Allows bot to stop itself via check-in (e.g. on limits)
-      if (isRunning !== undefined) {
-        updateData.isRunning = isRunning;
-      }
-
-      // Remove the check for existing bot to allow auto-registration on first check-in
-      const botCheck = await Bot.findOne({ hwid });
-
-      // Server-side limits enforcement
-      if (botCheck && botCheck.isRunning) {
-        // 1. Count Limit
-        if (completedCycles >= botCheck.limits.emailsCount) {
-          updateData.isRunning = false;
-          updateData.taskQueue = [];
-          updateData.$push.logs.$each.push({ message: "⏰ Limit reached (Emails Count). Stopping session.", timestamp: new Date() });
-        }
-        // 2. Time Limit
-        else if (botCheck.sessionStartedAt && botCheck.limits.timeMinutes) {
-          const elapsedMin = (Date.now() - botCheck.sessionStartedAt.getTime()) / 60000;
-          if (elapsedMin >= botCheck.limits.timeMinutes) {
-            updateData.isRunning = false;
-            updateData.taskQueue = [];
-            updateData.$push.logs.$each.push({ message: `⏰ Limit reached (Time: ${botCheck.limits.timeMinutes}m). Stopping session.`, timestamp: new Date() });
-          }
-        }
-      }
-
-      const bot = await Bot.findOneAndUpdate(
-        { hwid },
-        updateData,
-        { upsert: true, new: true }
-      );
-      
-      // Get the next 2 tasks (current + buffer)
-      const nextTasks = bot.taskQueue.slice(0, 2);
-
-      res.json({
-        isRunning: bot.isRunning,
-        mode: bot.mode,
-        subMode: bot.subMode,
-        limits: bot.limits,
-        success: bot.stats.success,
-        fail: bot.stats.fail,
-        queue: nextTasks
-      });
-    } catch (err) {
-      res.status(500).json({ error: 'Bot check-in failed' });
-    }
-  });
-
-  // Check and set bots to offline if not seen for 2 minutes
-  setInterval(async () => {
-    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
-    await Bot.updateMany(
-      { lastSeen: { $lt: twoMinutesAgo }, status: 'online' },
-      { status: 'offline' }
-    );
-  }, 60000);
-
-  app.post('/api/bot/task-complete', async (req, res) => {
-    try {
-      const { hwid } = req.body;
-      const bot = await Bot.findOneAndUpdate(
-        { hwid },
-        { $pop: { taskQueue: -1 } }, // Remove the first task
-        { new: true }
-      );
-      res.json({ success: true, remaining: bot?.taskQueue.length || 0 });
-    } catch (err) {
-      res.status(500).json({ error: 'Failed' });
-    }
   });
 
   // --- Auth Routes ---
@@ -385,51 +224,6 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/assign-email', authenticateToken, isAdmin, async (req, res) => {
-    try {
-      const { alias, userId } = req.body;
-      
-      const emailAlias = await EmailAlias.findOne({ alias });
-      if (!emailAlias) return res.status(404).json({ error: 'Alias not found' });
-      
-      if (!userId) {
-        // Unassigning
-        emailAlias.assignedTo = null;
-        emailAlias.status = 'admin'; // Default back to admin if unassigned
-        await emailAlias.save();
-        await Email.updateMany({ recipientAlias: alias }, { $set: { assignedTo: null, status: 'admin' } });
-      } else {
-        // Assigning to someone
-        emailAlias.assignedTo = userId;
-        emailAlias.status = 'assigned';
-        await emailAlias.save();
-        await Email.updateMany({ recipientAlias: alias }, { $set: { assignedTo: userId, status: 'sold' } });
-      }
-      
-      res.json({ success: true });
-    } catch (err) {
-      res.status(500).json({ error: 'Failed to assign email' });
-    }
-  });
-
-  app.get('/api/admin/stats/emails', authenticateToken, isAdmin, async (req, res) => {
-    try {
-      const now = new Date();
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-      const stats = {
-        admin: await EmailAlias.countDocuments({ status: 'admin' }),
-        adminAged: await EmailAlias.countDocuments({ status: 'admin', createdAt: { $lt: sevenDaysAgo } }),
-        stocking: await EmailAlias.countDocuments({ status: 'stocking' }),
-        stockingAged: await EmailAlias.countDocuments({ status: 'stocking', createdAt: { $lt: sevenDaysAgo } }),
-        assigned: await EmailAlias.countDocuments({ status: 'assigned' })
-      };
-      res.json(stats);
-    } catch (err) {
-      res.status(500).json({ error: 'Failed to fetch email stats' });
-    }
-  });
-
   // --- Live OTP API ---
   app.get('/api/live-otp/latest', authenticateToken, async (req: any, res) => {
     try {
@@ -472,23 +266,22 @@ async function startServer() {
     try {
       // Auto-update stocking aliases to stocked if older than 7 days
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      const aliasesToStock = await EmailAlias.find({ status: 'stocking', createdAt: { $lte: sevenDaysAgo } });
+      const aliasesToStock = await EmailAlias.find({ status: 'stocking', createdAt: { $lte: sevenDaysAgo } }).lean();
       
-      for (const alias of aliasesToStock) {
-        alias.status = 'stocked';
-        await alias.save();
+      for (const alias of aliasesToStock as any) {
+        await EmailAlias.updateOne({ _id: alias._id }, { $set: { status: 'stocked' } });
         // Update all emails for this alias
         await Email.updateMany({ recipientAlias: alias.alias, status: 'pending' }, { $set: { status: 'stock' } });
       }
 
-      const products = await Product.find();
+      const products = await Product.find().lean();
       
       // Calculate dynamic stock for 'activated_email' products
       const stockCount = await EmailAlias.countDocuments({ status: 'stocked' });
       
       const productsWithDynamicStock = products.map(p => {
         if (p.type === 'activated_email') {
-          return { ...p.toObject(), stock: stockCount };
+          return { ...p, stock: stockCount };
         }
         return p;
       });
@@ -536,12 +329,35 @@ async function startServer() {
   // --- User Emails Route ---
   app.get('/api/my-emails', authenticateToken, async (req: any, res) => {
     try {
+      const limit = parseInt(req.query.limit as string) || 10;
+      const skip = parseInt(req.query.skip as string) || 0;
+
       let query: any = { assignedTo: req.user.id };
       if (req.user.isAdmin) {
         query = { $or: [{ assignedTo: req.user.id }, { status: 'admin' }, { status: 'pending' }] };
       }
-      const emails = await Email.find(query).sort({ receivedAt: -1 });
+      const emails = await Email.find(query)
+        .select('-htmlBody') // Don't send heavy HTML in list
+        .sort({ receivedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+        
       res.json(emails);
+    } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  app.get('/api/my-emails/:id', authenticateToken, async (req: any, res) => {
+    try {
+      let query: any = { _id: req.params.id, assignedTo: req.user.id };
+      if (req.user.isAdmin) {
+        query = { _id: req.params.id };
+      }
+      const email = await Email.findOne(query).lean();
+      if (!email) return res.status(404).json({ error: 'Email not found' });
+      res.json(email);
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
     }
@@ -553,7 +369,7 @@ async function startServer() {
       if (req.user.isAdmin) {
         query = {}; // Admins can see all aliases to assign them
       }
-      const aliases = await EmailAlias.find(query).sort({ createdAt: -1 });
+      const aliases = await EmailAlias.find(query).sort({ createdAt: -1 }).lean();
       res.json(aliases);
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
@@ -711,6 +527,9 @@ async function startServer() {
   app.get('/api/admin/emails', authenticateToken, isAdmin, async (req, res) => {
     try {
       const mode = req.query.mode;
+      const limit = parseInt(req.query.limit as string) || 10;
+      const skip = parseInt(req.query.skip as string) || 0;
+
       let query: any = { status: { $ne: 'sold' } };
       
       if (mode === 'admin') {
@@ -719,7 +538,13 @@ async function startServer() {
         query.status = { $in: ['pending', 'stock'] };
       }
       
-      const emails = await Email.find(query).sort({ receivedAt: -1 });
+      const emails = await Email.find(query)
+        .select('-htmlBody') // Don't send heavy HTML in list
+        .sort({ receivedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+        
       res.json(emails);
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
@@ -728,18 +553,8 @@ async function startServer() {
 
   app.get('/api/admin/aliases', authenticateToken, isAdmin, async (req, res) => {
     try {
-      const aliases = await EmailAlias.find().populate('assignedTo', 'username email').sort({ createdAt: -1 });
+      const aliases = await EmailAlias.find().populate('assignedTo', 'username email').sort({ createdAt: -1 }).lean();
       res.json(aliases);
-    } catch (err) {
-      res.status(500).json({ error: 'Server error' });
-    }
-  });
-
-  app.post('/api/admin/aliases/:id/type', authenticateToken, isAdmin, async (req: any, res) => {
-    try {
-      const { type } = req.body;
-      const alias = await EmailAlias.findByIdAndUpdate(req.params.id, { type }, { new: true });
-      res.json(alias);
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
     }

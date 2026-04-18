@@ -29,11 +29,15 @@ export default function AdminDashboard() {
   }, []);
   
   const { config, products, orders, emails, aliases, setConfig, setProducts, setOrders, setEmails, setAliases } = useAdminStore();
+  const [emailLimit, setEmailLimit] = useState(10);
+  const [hasMoreEmails, setHasMoreEmails] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (currentEmailLimit?: number) => {
     if (!token) return;
     const headers = { 'Authorization': `Bearer ${token}` };
     try {
+      const activeEmailLimit = currentEmailLimit || emailLimit;
       const state = useAdminStore.getState();
       if (activeTab === 'config') {
         const res = await fetch('/api/admin/config', { headers, cache: 'no-store' });
@@ -48,22 +52,32 @@ export default function AdminDashboard() {
         const data = await res.json();
         if (JSON.stringify(state.orders) !== JSON.stringify(data)) setOrders(data);
       } else if (activeTab === 'emails') {
-        const res = await fetch('/api/admin/emails?mode=admin', { headers, cache: 'no-store' });
+        const res = await fetch(`/api/admin/emails?mode=admin&limit=${activeEmailLimit}`, { headers, cache: 'no-store' });
         const data = await res.json();
+        setHasMoreEmails(data.length >= activeEmailLimit);
         if (JSON.stringify(state.emails) !== JSON.stringify(data)) setEmails(data);
       } else if (activeTab === 'stocking') {
         const resAliases = await fetch('/api/admin/aliases', { headers, cache: 'no-store' });
         const dataAliases = await resAliases.json();
         if (JSON.stringify(state.aliases) !== JSON.stringify(dataAliases)) setAliases(dataAliases);
         
-        const resEmails = await fetch('/api/admin/emails?mode=stocking', { headers, cache: 'no-store' });
+        const resEmails = await fetch(`/api/admin/emails?mode=stocking&limit=${activeEmailLimit}`, { headers, cache: 'no-store' });
         const dataEmails = await resEmails.json();
+        setHasMoreEmails(dataEmails.length >= activeEmailLimit);
         if (JSON.stringify(state.emails) !== JSON.stringify(dataEmails)) setEmails(dataEmails);
       }
     } catch (err) {
       console.error(err);
     }
-  }, [activeTab, token, setConfig, setProducts, setOrders, setEmails, setAliases]);
+  }, [activeTab, token, setConfig, setProducts, setOrders, setEmails, setAliases, emailLimit]);
+
+  const handleLoadMoreEmails = async () => {
+    setLoadingMore(true);
+    const newLimit = emailLimit + 20;
+    setEmailLimit(newLimit);
+    await fetchData(newLimit);
+    setLoadingMore(false);
+  };
 
   useEffect(() => {
     if (user && user.isAdmin) {
@@ -302,6 +316,16 @@ export default function AdminDashboard() {
                   <div className="text-sm text-gray-300 font-mono bg-black/80 p-3 rounded-lg border border-premium-border">{e.otp ? `OTP: ${e.otp}` : 'No OTP detected'}</div>
                 </div>
               ))}
+              
+              {hasMoreEmails && emails.length > 0 && (
+                <button 
+                  onClick={handleLoadMoreEmails}
+                  disabled={loadingMore}
+                  className="w-full py-3 bg-white/5 hover:bg-white/10 border border-dashed border-premium-border rounded-xl text-gray-400 text-sm font-medium transition-all"
+                >
+                  {loadingMore ? 'Loading...' : 'Load More Emails'}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -363,6 +387,16 @@ export default function AdminDashboard() {
                     <div className="text-sm text-gray-300 font-mono bg-black/80 p-3 rounded-lg border border-premium-border">{e.otp ? `OTP: ${e.otp}` : 'No OTP detected'}</div>
                   </div>
                 ))}
+                
+                {hasMoreEmails && emails.length > 0 && (
+                  <button 
+                    onClick={handleLoadMoreEmails}
+                    disabled={loadingMore}
+                    className="w-full py-3 bg-white/5 hover:bg-white/10 border border-dashed border-premium-border rounded-xl text-gray-400 text-sm font-medium transition-all"
+                  >
+                    {loadingMore ? 'Loading...' : 'Load More Emails'}
+                  </button>
+                )}
               </div>
             </div>
           </div>

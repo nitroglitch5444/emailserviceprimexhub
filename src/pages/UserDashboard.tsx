@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Mail, Trash2, Copy, Power, RefreshCw, CheckCircle2, AlertCircle, ArrowLeft, UserCircle2, Menu, X, Database, Send, RotateCcw, Clock, User } from 'lucide-react';
+import { Mail, Trash2, Copy, Power, RefreshCw, CheckCircle2, AlertCircle, ArrowLeft, UserCircle2, Menu, X, Database, Send, RotateCcw } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -50,15 +50,15 @@ type User = {
 export default function UserDashboard() {
   const { user, token } = useAuthStore();
   const navigate = useNavigate();
-  const [activeTab, setActiveTabState] = useState<'inbox' | 'trash' | 'aliases' | 'restore' | 'assigned'>(() => {
+  const [activeTab, setActiveTabState] = useState<'inbox' | 'trash' | 'aliases' | 'restore'>(() => {
     const hash = window.location.hash.replace('#', '');
     if (hash === 'live-otp') return 'inbox';
-    return ['inbox', 'trash', 'aliases', 'restore', 'assigned'].includes(hash) ? (hash as any) : 'inbox';
+    return ['inbox', 'trash', 'aliases', 'restore'].includes(hash) ? (hash as any) : 'inbox';
   });
 
   const [liveMode, setLiveMode] = useState(() => window.location.hash === '#live-otp');
 
-  const setActiveTab = (tab: 'inbox' | 'trash' | 'aliases' | 'restore' | 'assigned') => {
+  const setActiveTab = (tab: 'inbox' | 'trash' | 'aliases' | 'restore') => {
     setActiveTabState(tab);
     setLiveMode(false);
     window.location.hash = tab;
@@ -79,7 +79,7 @@ export default function UserDashboard() {
       if (hash === 'live-otp') {
         setLiveMode(true);
         setActiveTabState('inbox');
-      } else if (['inbox', 'trash', 'aliases', 'restore', 'assigned'].includes(hash)) {
+      } else if (['inbox', 'trash', 'aliases', 'restore'].includes(hash)) {
         setLiveMode(false);
         setActiveTabState(hash as any);
       }
@@ -87,29 +87,13 @@ export default function UserDashboard() {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
-
-  const [stats, setStats] = useState<any>(null);
-  const [visibleEmailsCount, setVisibleEmailsCount] = useState(25);
-
-  const fetchStats = async () => {
-    if (!token || !user?.isAdmin) return;
-    try {
-      const res = await fetch('/api/admin/stats/emails', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) setStats(await res.json());
-    } catch (e) {}
-  };
-
-  useEffect(() => {
-    fetchStats();
-    const interval = setInterval(fetchStats, 10000);
-    return () => clearInterval(interval);
-  }, [token, user]);
   
   const { emails, users, aliases, setEmails, setUsers } = useUserStore();
   
   const [loading, setLoading] = useState(emails.length === 0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [emailLimit, setEmailLimit] = useState(10);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
@@ -125,59 +109,54 @@ export default function UserDashboard() {
 
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
-  const fetchEmails = useCallback(async (isInitial = false) => {
+  const fetchEmails = useCallback(async (isInitial = false, currentLimit?: number) => {
     if (!token) {
       console.log('[FRONTEND EMAIL FETCH] No token found, skipping fetch.');
       return;
     }
     try {
+      const activeLimit = currentLimit || emailLimit;
       const currentEmails = useUserStore.getState().emails;
-      console.log(`[FRONTEND EMAIL FETCH] Starting fetch. isInitial: ${isInitial}`);
+      
       if (isInitial && currentEmails.length === 0) setLoading(true);
       
-      const endpoint = '/api/my-emails';
-      console.log(`[FRONTEND EMAIL FETCH] Calling endpoint: ${endpoint}`);
+      const endpoint = `/api/my-emails?limit=${activeLimit}`;
       
       const res = await fetch(endpoint, {
         headers: { 'Authorization': `Bearer ${token}` },
         cache: 'no-store'
       });
       
-      console.log(`[FRONTEND EMAIL FETCH] Response status: ${res.status}`);
       if (!res.ok) throw new Error(`Failed to fetch emails. Status: ${res.status}`);
       
       const data = await res.json();
       setLastUpdated(new Date());
-      console.log(`[FRONTEND EMAIL FETCH] Received ${data.length} emails from server.`);
+      
+      // Check if we have more emails
+      if (data.length < activeLimit) {
+        setHasMore(false);
+      } else {
+        setHasMore(true);
+      }
       
       if (data.length > 0) {
         const latestId = data[0]._id;
         
         // Check for new emails and trigger notifications
         if (lastEmailIdRef.current && lastEmailIdRef.current !== latestId) {
-          console.log(`[FRONTEND EMAIL FETCH] New emails detected! Old latest ID: ${lastEmailIdRef.current}, New latest ID: ${latestId}`);
           const newEmails = [];
           for (const email of data) {
             if (email._id === lastEmailIdRef.current) break;
             newEmails.push(email);
           }
-          console.log(`[FRONTEND EMAIL FETCH] Found ${newEmails.length} new emails.`);
           
           // Show notification for new emails with OTP
           newEmails.forEach(email => {
             if (email.otp) {
-              console.log(`[FRONTEND EMAIL FETCH] New email contains OTP: ${email.otp}. Checking notification permissions...`);
-              if ('Notification' in window) {
-                if (Notification.permission === 'granted') {
-                  console.log(`[FRONTEND EMAIL FETCH] Triggering notification for OTP: ${email.otp}`);
-                  new Notification(`OTP: ${email.otp}`, {
-                    body: `For: ${email.recipientAlias}`,
-                  });
-                } else {
-                  console.log(`[FRONTEND EMAIL FETCH] Notification permission not granted. Current status: ${Notification.permission}`);
-                }
-              } else {
-                console.log(`[FRONTEND EMAIL FETCH] Notifications not supported in this browser.`);
+              if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification(`OTP: ${email.otp}`, {
+                  body: `For: ${email.recipientAlias}`,
+                });
               }
             }
           });
@@ -186,12 +165,10 @@ export default function UserDashboard() {
         lastEmailIdRef.current = latestId;
       }
 
-      // Only update if data actually changed to prevent unnecessary re-renders
-      if (JSON.stringify(currentEmails) !== JSON.stringify(data)) {
-        console.log(`[FRONTEND EMAIL FETCH] Data changed, updating state.`);
+      // Optimization: Only update if the relevant slice of data actually changed
+      // or if we've loaded more data than before
+      if (currentEmails.length !== data.length || JSON.stringify(currentEmails) !== JSON.stringify(data)) {
         setEmails(data);
-      } else {
-        console.log(`[FRONTEND EMAIL FETCH] Data unchanged, skipping state update.`);
       }
       
       setError(null);
@@ -203,7 +180,7 @@ export default function UserDashboard() {
     } finally {
       if (isInitial) setLoading(false);
     }
-  }, [token, user, setEmails]);
+  }, [token, user, setEmails, emailLimit]);
 
   const fetchUsers = useCallback(async () => {
     if (!token || !user?.isAdmin) return;
@@ -236,33 +213,14 @@ export default function UserDashboard() {
     }
   }, [token]);
 
-  const handleToggleAliasType = async (id: string, currentType: string) => {
-    try {
-      const newType = currentType === 'usable' ? 'non-usable' : 'usable';
-      const res = await fetch(`/api/admin/aliases/${id}/type`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ type: newType })
-      });
-      if (res.ok) fetchAliases();
-    } catch (err) {
-      console.error('Failed to toggle type', err);
-    }
-  };
-
   useEffect(() => {
     fetchEmails(true);
     fetchUsers();
     fetchAliases();
-    // Reset visible emails when changing tab or refreshing
-    setVisibleEmailsCount(25);
     const interval = setInterval(() => {
       fetchEmails(false);
       fetchAliases();
-    }, 2000); // Poll every 2 seconds for faster updates
+    }, 5000); // Polling every 5 seconds instead of 2 to reduce server load
     return () => clearInterval(interval);
   }, [fetchEmails, fetchUsers, fetchAliases]);
 
@@ -368,6 +326,36 @@ export default function UserDashboard() {
       console.error('Failed to clear emails', err);
       setEmails(previousEmails);
       setSelectedEmail(previousSelected);
+    }
+  };
+
+  const handleLoadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    const newLimit = emailLimit + 20;
+    setEmailLimit(newLimit);
+    await fetchEmails(false, newLimit);
+    setLoadingMore(false);
+  };
+
+  const handleEmailClick = async (email: Email) => {
+    setSelectedEmail(email);
+    // If htmlBody is missing, fetch the full email content
+    if (!email.htmlBody) {
+      try {
+        const res = await fetch(`/api/my-emails/${email._id}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const fullEmail = await res.json();
+          setSelectedEmail(fullEmail);
+          // Also update the email in the store so we don't fetch it again
+          const updatedEmails = emails.map(e => e._id === email._id ? fullEmail : e);
+          setEmails(updatedEmails);
+        }
+      } catch (err) {
+        console.error('Failed to fetch full email', err);
+      }
     }
   };
 
@@ -536,22 +524,6 @@ export default function UserDashboard() {
           >
             <Database className="w-4 h-4" />
             Email IDs
-          </button>
-
-          <button
-            onClick={() => { setActiveTab('assigned'); setSelectedEmail(null); setIsSidebarOpen(false); }}
-            className={cn(
-              "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
-              activeTab === 'assigned' ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "text-gray-400 hover:bg-white/5 hover:text-white border border-transparent"
-            )}
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            Assigned
-            {aliases.filter(a => a.status === 'assigned').length > 0 && (
-              <span className="ml-auto bg-emerald-500/20 text-emerald-400 py-0.5 px-2 rounded-full text-xs font-bold">
-                {aliases.filter(a => a.status === 'assigned').length}
-              </span>
-            )}
           </button>
           
           <button
@@ -763,39 +735,10 @@ export default function UserDashboard() {
           ) : (
             /* List View */
             <>
-              {stats && user?.isAdmin && activeTab === 'aliases' && (
-                <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4 mb-6 md:mb-8">
-                  <div className="glass-panel p-4 rounded-2xl border-purple-500/10 text-center">
-                    <p className="text-[10px] text-purple-400 font-bold uppercase tracking-widest mb-1">Admin Total</p>
-                    <p className="text-xl md:text-2xl font-bold text-white tracking-tighter">{stats.admin}</p>
-                  </div>
-                  <div className="glass-panel p-4 rounded-2xl border-purple-500/10 text-center bg-purple-500/5">
-                    <p className="text-[10px] text-purple-300 font-bold uppercase tracking-widest mb-1">Admin Aged</p>
-                    <p className="text-xl md:text-2xl font-bold text-white tracking-tighter">{stats.adminAged}</p>
-                  </div>
-                  <div className="glass-panel p-4 rounded-2xl border-blue-500/10 text-center">
-                    <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest mb-1">Stocking Total</p>
-                    <p className="text-xl md:text-2xl font-bold text-white tracking-tighter">{stats.stocking}</p>
-                  </div>
-                  <div className="glass-panel p-4 rounded-2xl border-blue-500/10 text-center bg-blue-500/5">
-                    <p className="text-[10px] text-blue-300 font-bold uppercase tracking-widest mb-1">Stocking Aged</p>
-                    <p className="text-xl md:text-2xl font-bold text-white tracking-tighter">{stats.stockingAged}</p>
-                  </div>
-                  <div className="glass-panel p-4 rounded-2xl border-emerald-500/10 text-center">
-                    <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest mb-1">Assigned</p>
-                    <p className="text-xl md:text-2xl font-bold text-white tracking-tighter">{stats.assigned}</p>
-                  </div>
-                </div>
-              )}
               {activeTab === 'inbox' && (
                 <div className="glass-panel overflow-hidden">
                   <div className="divide-y divide-premium-border">
-                    {loading && emails.length === 0 ? (
-                      <div className="p-20 text-center">
-                        <RefreshCw className="w-10 h-10 text-accent-primary animate-spin mx-auto mb-4" />
-                        <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">Loading Secure Inbox...</p>
-                      </div>
-                    ) : (emails.filter(e => !aliases.find(a => a.alias === e.recipientAlias)?.isDeleted).length === 0 ? (
+                    {emails.filter(e => !aliases.find(a => a.alias === e.recipientAlias)?.isDeleted).length === 0 && !loading && !error ? (
                       <div className="text-center py-32">
                         <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6 border border-premium-border">
                           <Mail className="w-10 h-10 text-gray-500" />
@@ -804,92 +747,89 @@ export default function UserDashboard() {
                         <p className="text-gray-400 mt-2 font-medium">Waiting for incoming emails...</p>
                       </div>
                     ) : (
-                      <>
-                        {emails
-                          .filter(e => !aliases.find(a => a.alias === e.recipientAlias)?.isDeleted)
-                          .slice(0, visibleEmailsCount)
-                          .map((email) => (
-                            <div 
-                              key={email._id} 
-                              onClick={() => setSelectedEmail(email)}
-                              className="group flex flex-col md:flex-row md:items-center gap-2 md:gap-4 px-4 md:px-6 py-3 md:py-4 hover:bg-white/5 cursor-pointer transition-all duration-200 border-l-2 border-transparent hover:border-accent-primary"
-                            >
-                              <div className="w-full md:w-48 shrink-0 flex items-center gap-3 truncate">
-                                <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-white/10 flex items-center justify-center shrink-0 border border-premium-border group-hover:bg-accent-primary/20 transition-colors">
-                                  <span className="text-[10px] md:text-xs font-bold text-gray-300 group-hover:text-accent-primary">{getSenderName(email.from).charAt(0).toUpperCase()}</span>
-                                </div>
-                                <span className="font-bold text-white text-xs md:text-sm truncate">
-                                  {getSenderName(email.from)}
-                                </span>
-                                <div className="md:hidden ml-auto text-[10px] font-bold text-gray-500">
-                                  {formatDistanceToNow(new Date(email.receivedAt || email.timestamp), { addSuffix: true })}
-                                </div>
-                              </div>
-                              
-                              <div className="flex-1 min-w-0 flex flex-col md:flex-row md:items-center gap-1 md:gap-3 text-xs md:text-sm">
-                                <span className="font-bold text-white truncate md:max-w-[250px]">
-                                  {email.subject || '(No Subject)'}
-                                </span>
-                                <span className="hidden md:inline text-gray-600 shrink-0 font-bold">-</span>
-                                <span className="text-gray-400 truncate font-medium">
-                                  {email.fullBody.replace(/\s+/g, ' ').substring(0, 120)}
-                                </span>
-                              </div>
-                              
-                              {user?.isAdmin && (
-                                <div className="w-full md:w-auto shrink-0 text-[10px] md:text-xs flex flex-wrap gap-2 mt-1 md:mt-0">
-                                  {email.status === 'admin' && (
-                                    <span className="bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md font-bold tracking-wide">ADMIN</span>
-                                  )}
-                                  {email.status === 'pending' && (
-                                    <span className="bg-gray-500/20 text-gray-400 border border-gray-500/30 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md font-bold tracking-wide">PENDING</span>
-                                  )}
-                                  {email.status === 'stock' && (
-                                    <span className="bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md font-bold tracking-wide">STOCK</span>
-                                  )}
-                                  {email.assignedTo ? (
-                                    <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md font-bold tracking-wide">
-                                      <span className="hidden md:inline">ASSIGNED TO: {users.find(u => u._id === email.assignedTo)?.username || 'Unknown'}</span>
-                                      <span className="md:hidden">ASSIGNED</span>
-                                    </span>
-                                  ) : (
-                                    <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md font-bold tracking-wide">
-                                      <span className="hidden md:inline">Unassigned</span>
-                                      <span className="md:hidden">UNASSIGNED</span>
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                              
-                              <div className="hidden md:block w-28 shrink-0 text-right text-xs font-bold text-gray-500 group-hover:hidden">
-                                {formatDistanceToNow(new Date(email.receivedAt || email.timestamp), { addSuffix: true })}
-                              </div>
-
-                              <div className="w-full md:w-28 shrink-0 flex justify-end gap-2 hidden group-hover:flex">
-                                <button
-                                  onClick={(e) => deleteEmail(email._id, e)}
-                                  className="p-1.5 md:p-2 text-gray-400 hover:text-red-400 md:hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors active:scale-95"
-                                  title="Delete"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5 md:w-4 md:h-4" />
-                                </button>
-                              </div>
+                      emails.filter(e => !aliases.find(a => a.alias === e.recipientAlias)?.isDeleted).map((email) => (
+                        <div 
+                          key={email._id} 
+                          onClick={() => handleEmailClick(email)}
+                          className="group flex flex-col md:flex-row md:items-center gap-2 md:gap-4 px-4 md:px-6 py-3 md:py-4 hover:bg-white/5 cursor-pointer transition-all duration-200 border-l-2 border-transparent hover:border-accent-primary"
+                        >
+                          <div className="w-full md:w-48 shrink-0 flex items-center gap-3 truncate">
+                            <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-white/10 flex items-center justify-center shrink-0 border border-premium-border group-hover:bg-accent-primary/20 transition-colors">
+                              <span className="text-[10px] md:text-xs font-bold text-gray-300 group-hover:text-accent-primary">{getSenderName(email.from).charAt(0).toUpperCase()}</span>
                             </div>
-                          ))}
-                        
-                        {emails.filter(e => !aliases.find(a => a.alias === e.recipientAlias)?.isDeleted).length > visibleEmailsCount && (
-                          <div className="p-6 text-center">
-                            <button 
-                              onClick={() => setVisibleEmailsCount(prev => prev + 25)}
-                              className="px-6 py-2.5 bg-accent-primary hover:bg-blue-600 text-white rounded-xl text-xs font-bold transition-all active:scale-95 shadow-[0_0_15px_rgba(59,130,246,0.3)] flex items-center gap-2 mx-auto"
+                            <span className="font-bold text-white text-xs md:text-sm truncate">
+                              {getSenderName(email.from)}
+                            </span>
+                            <div className="md:hidden ml-auto text-[10px] font-bold text-gray-500">
+                              {formatDistanceToNow(new Date(email.receivedAt || email.timestamp), { addSuffix: true })}
+                            </div>
+                          </div>
+                          
+                          <div className="flex-1 min-w-0 flex flex-col md:flex-row md:items-center gap-1 md:gap-3 text-xs md:text-sm">
+                            <span className="font-bold text-white truncate md:max-w-[250px]">
+                              {email.subject || '(No Subject)'}
+                            </span>
+                            <span className="hidden md:inline text-gray-600 shrink-0 font-bold">-</span>
+                            <span className="text-gray-400 truncate font-medium">
+                              {email.fullBody.replace(/\s+/g, ' ').substring(0, 120)}
+                            </span>
+                          </div>
+                          
+                          {user?.isAdmin && (
+                            <div className="w-full md:w-auto shrink-0 text-[10px] md:text-xs flex flex-wrap gap-2 mt-1 md:mt-0">
+                              {email.status === 'admin' && (
+                                <span className="bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md font-bold tracking-wide">ADMIN</span>
+                              )}
+                              {email.status === 'pending' && (
+                                <span className="bg-gray-500/20 text-gray-400 border border-gray-500/30 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md font-bold tracking-wide">PENDING</span>
+                              )}
+                              {email.status === 'stock' && (
+                                <span className="bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md font-bold tracking-wide">STOCK</span>
+                              )}
+                              {email.assignedTo ? (
+                                <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md font-bold tracking-wide">
+                                  <span className="hidden md:inline">ASSIGNED TO: {users.find(u => u._id === email.assignedTo)?.username || 'Unknown'}</span>
+                                  <span className="md:hidden">ASSIGNED</span>
+                                </span>
+                              ) : (
+                                <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 md:px-2.5 md:py-1 rounded-md font-bold tracking-wide">
+                                  <span className="hidden md:inline">Unassigned</span>
+                                  <span className="md:hidden">UNASSIGNED</span>
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          
+                          <div className="hidden md:block w-28 shrink-0 text-right text-xs font-bold text-gray-500 group-hover:hidden">
+                            {formatDistanceToNow(new Date(email.receivedAt || email.timestamp), { addSuffix: true })}
+                          </div>
+
+                          <div className="w-full md:w-28 shrink-0 flex justify-end gap-2 hidden group-hover:flex">
+                            <button
+                              onClick={(e) => deleteEmail(email._id, e)}
+                              className="p-1.5 md:p-2 text-gray-400 hover:text-red-400 md:hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors active:scale-95"
+                              title="Delete"
                             >
-                              <RefreshCw className="w-3.5 h-3.5" /> 
-                              Load More Emails ({emails.filter(e => !aliases.find(a => a.alias === e.recipientAlias)?.isDeleted).length - visibleEmailsCount} remaining)
+                              <Trash2 className="w-3.5 h-3.5 md:w-4 md:h-4" />
                             </button>
                           </div>
-                        )}
-                      </>
-                    ))}
+                        </div>
+                      ))
+                    )}
+                    
+                    {/* Load More Button */}
+                    {emails.length > 0 && hasMore && activeTab === 'inbox' && (
+                      <div className="p-4 border-t border-premium-border flex justify-center">
+                        <button
+                          onClick={handleLoadMore}
+                          disabled={loadingMore}
+                          className="px-6 py-2 bg-white/5 hover:bg-white/10 border border-premium-border rounded-lg text-sm font-semibold transition-all active:scale-95 flex items-center gap-2"
+                        >
+                          {loadingMore ? <RefreshCw className="w-4 h-4 animate-spin text-accent-primary" /> : <Database className="w-4 h-4 text-accent-primary" />}
+                          {loadingMore ? 'Loading...' : 'Load More Emails'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -897,19 +837,19 @@ export default function UserDashboard() {
               {activeTab === 'aliases' && (
                 <div className="glass-panel overflow-hidden">
                   <div className="p-6 border-b border-premium-border flex justify-between items-center">
-                    <h3 className="text-xl font-bold text-white tracking-tight">Email IDs (Unassigned)</h3>
+                    <h3 className="text-xl font-bold text-white tracking-tight">Email IDs</h3>
                   </div>
                   <div className="divide-y divide-premium-border">
-                    {aliases.filter(a => !a.isDeleted && a.status !== 'assigned').length === 0 && !loading && !error ? (
+                    {aliases.filter(a => !a.isDeleted).length === 0 && !loading && !error ? (
                       <div className="text-center py-32">
                         <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6 border border-premium-border">
                           <Database className="w-10 h-10 text-gray-500" />
                         </div>
-                        <h3 className="text-xl font-bold text-white tracking-tight">No Unassigned Email IDs</h3>
-                        <p className="text-gray-400 mt-2 font-medium">All emails are currently assigned or deleted.</p>
+                        <h3 className="text-xl font-bold text-white tracking-tight">No Email IDs found</h3>
+                        <p className="text-gray-400 mt-2 font-medium">You don't have any email IDs yet.</p>
                       </div>
                     ) : (
-                      aliases.filter(a => !a.isDeleted && a.status !== 'assigned').map((alias) => {
+                      aliases.filter(a => !a.isDeleted).map((alias) => {
                         const timer = getTimerDisplay(alias.createdAt);
                         return (
                           <div key={alias._id} className="p-4 md:p-6 hover:bg-white/5 transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -937,17 +877,6 @@ export default function UserDashboard() {
                                 )}>
                                   {alias.status.toUpperCase()}
                                 </span>
-                                {user?.isAdmin && (
-                                  <button
-                                    onClick={() => handleToggleAliasType(alias._id, alias.type)}
-                                    className={cn(
-                                      "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border transition-all",
-                                      alias.type === 'usable' ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/20" : "bg-gray-500/10 text-gray-500 border-gray-500/30 hover:bg-gray-500/20"
-                                    )}
-                                  >
-                                    {alias.type || 'usable'}
-                                  </button>
-                                )}
                                 {alias.assignedTo && (
                                   <span className="text-gray-400 truncate max-w-[150px] md:max-w-none">
                                     Assigned to: <span className="text-white font-medium">{users.find(u => u._id === alias.assignedTo)?.email || 'Unknown User'}</span>
@@ -1049,54 +978,6 @@ export default function UserDashboard() {
                                 Restore
                               </button>
                             </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {activeTab === 'assigned' && (
-                <div className="glass-panel overflow-hidden">
-                  <div className="p-6 border-b border-premium-border flex justify-between items-center">
-                    <h3 className="text-xl font-bold text-white tracking-tight">Assigned Emails</h3>
-                  </div>
-                  <div className="divide-y divide-premium-border">
-                    {aliases.filter(a => a.status === 'assigned').length === 0 && !loading && !error ? (
-                      <div className="text-center py-32">
-                        <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6 border border-premium-border">
-                          <CheckCircle2 className="w-10 h-10 text-gray-500" />
-                        </div>
-                        <h3 className="text-xl font-bold text-white tracking-tight">No Assigned Emails</h3>
-                        <p className="text-gray-400 mt-2 font-medium">Emails assigned to players will appear here.</p>
-                      </div>
-                    ) : (
-                      aliases.filter(a => a.status === 'assigned').map((alias) => {
-                        const timer = getTimerDisplay(alias.createdAt);
-                        return (
-                          <div key={alias._id} className="p-4 md:p-6 hover:bg-white/5 transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                            <div className="min-w-0 w-full sm:flex-1">
-                              <div className="flex items-center gap-3 mb-1">
-                                <span className="text-white font-bold truncate text-base">{alias.alias}</span>
-                                <span className="bg-emerald-500/10 text-emerald-400 text-[10px] px-2 py-0.5 rounded font-black border border-emerald-500/20 uppercase tracking-widest">ASSIGNED</span>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 font-medium">
-                                <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Expires in {timer.text}</span>
-                                <span className="flex items-center gap-1.5">
-                                  <User className="w-3.5 h-3.5" /> 
-                                  Player: <span className="text-emerald-400">{users.find(u => u._id === alias.assignedTo)?.username || 'Unknown'}</span>
-                                </span>
-                              </div>
-                            </div>
-                            {user?.isAdmin && (
-                              <button 
-                                onClick={() => assignEmail(alias.alias, '')}
-                                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg text-xs font-bold border border-premium-border transition-all active:scale-95"
-                              >
-                                Unassign Email
-                              </button>
-                            )}
                           </div>
                         );
                       })
