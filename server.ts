@@ -217,10 +217,11 @@ async function startServer() {
   // --- Public Bot Routes (Used by toolbox.js) ---
   app.post('/api/bot/check-in', async (req, res) => {
     try {
-      const { hwid, logs, stats, completedCycles, isRunning } = req.body;
+      const { hwid, name, logs, stats, completedCycles, isRunning } = req.body;
       
       const updateData: any = { 
         status: 'online', 
+        name: name || undefined,
         lastSeen: Date.now(),
         $push: { logs: { $each: logs || [], $slice: -50 } },
         stats
