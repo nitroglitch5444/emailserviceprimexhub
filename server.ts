@@ -104,6 +104,7 @@ const botSchema = new mongoose.Schema({
   status: { type: String, enum: ['online', 'offline'], default: 'offline' },
   lastSeen: { type: Date, default: Date.now },
   isRunning: { type: Boolean, default: false },
+  sessionStartedAt: { type: Date, default: null },
   mode: { type: String, enum: ['email_create', 'upload'], default: 'email_create' },
   subMode: { type: String, enum: ['stocking', 'admin'], default: 'stocking' },
   limits: {
@@ -189,11 +190,25 @@ async function startServer() {
       
       // If we are starting the bot, generate the queue
       if (isRunning === true) {
+        update.sessionStartedAt = Date.now();
         const count = limits.emailsCount || 10;
         const password = subMode === 'admin' ? "gonabot@5414" : "user01@g";
         const taskQueue = [];
-        for (let i = 0; i < count; i++) {
-          taskQueue.push({ password, mode, subMode });
+        
+        if (mode === 'upload') {
+          const usableAliases = await EmailAlias.find({ 
+            type: 'usable', 
+            isDeleted: false, 
+            status: { $ne: 'assigned' } 
+          }).limit(count);
+
+          for (const aliasDoc of usableAliases) {
+            taskQueue.push({ password, mode, subMode, alias: aliasDoc.alias });
+          }
+        } else {
+          for (let i = 0; i < count; i++) {
+            taskQueue.push({ password, mode, subMode });
+          }
         }
         update.taskQueue = taskQueue;
       } else if (isRunning === false) {
@@ -231,14 +246,24 @@ async function startServer() {
       const botCheck = await Bot.findOne({ hwid });
       if (!botCheck) return res.status(404).json({ error: 'Bot not found' });
 
-      // Server-side safety: If bot finished its count limit, auto-stop it 
-      if (botCheck.isRunning && completedCycles >= botCheck.limits.emailsCount) {
-        updateData.isRunning = false;
-        updateData.taskQueue = []; // Clear queue on stop
+      // Server-side limits enforcement
+      if (botCheck.isRunning) {
+        // 1. Count Limit
+        if (completedCycles >= botCheck.limits.emailsCount) {
+          updateData.isRunning = false;
+          updateData.taskQueue = [];
+          updateData.$push.logs.$each.push({ message: "⏰ Limit reached (Emails Count). Stopping session.", timestamp: new Date() });
+        }
+        // 2. Time Limit
+        else if (botCheck.sessionStartedAt && botCheck.limits.timeMinutes) {
+          const elapsedMin = (Date.now() - botCheck.sessionStartedAt.getTime()) / 60000;
+          if (elapsedMin >= botCheck.limits.timeMinutes) {
+            updateData.isRunning = false;
+            updateData.taskQueue = [];
+            updateData.$push.logs.$each.push({ message: `⏰ Limit reached (Time: ${botCheck.limits.timeMinutes}m). Stopping session.`, timestamp: new Date() });
+          }
+        }
       }
-
-      // If bot is running and queue is empty, but we haven't reached limits, we could auto-stop or stay idle.
-      // But the user wants the panel to push the queue.
 
       const bot = await Bot.findOneAndUpdate(
         { hwid },
