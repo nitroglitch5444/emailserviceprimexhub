@@ -184,9 +184,11 @@ async function startServer() {
 
   app.post('/api/admin/bots/update', authenticateToken, isAdmin, async (req, res) => {
     try {
-      const { hwid, name, mode, subMode, limits, isRunning } = req.body;
+      const { hwid, name, mode, subMode, limits, isRunning, logs, stats } = req.body;
       
       let update: any = { name, mode, subMode, limits, isRunning };
+      if (logs !== undefined) update.logs = logs;
+      if (stats !== undefined) update.stats = stats;
       
       // If we are starting the bot, generate the queue
       if (isRunning === true) {
