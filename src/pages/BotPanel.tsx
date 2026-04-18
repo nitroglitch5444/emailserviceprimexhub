@@ -30,6 +30,7 @@ interface Bot {
   name: string;
   status: 'online' | 'offline';
   lastSeen: string;
+  isRunning: boolean;
   mode: 'email_create' | 'upload';
   subMode: 'stocking' | 'admin';
   limits: BotLimit;
@@ -241,6 +242,23 @@ export default function BotPanel() {
                 </div>
 
                 <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 mr-4">
+                    {selectedBot.isRunning ? (
+                      <button
+                        onClick={() => updateBot(selectedBot.hwid, { isRunning: false })}
+                        className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-[0_0_15px_rgba(220,38,38,0.4)] active:scale-95 transition-all"
+                      >
+                        <Power className="w-4 h-4" /> STOP SESSION
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => updateBot(selectedBot.hwid, { isRunning: true })}
+                        className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-[0_0_15px_rgba(22,163,74,0.4)] active:scale-95 transition-all"
+                      >
+                        <Activity className="w-4 h-4" /> RUN BOT
+                      </button>
+                    )}
+                  </div>
                   <div className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-center">
                     <p className="text-[10px] text-gray-500 uppercase mb-0.5">Success</p>
                     <p className="text-sm font-bold text-green-500">{selectedBot.stats.success}</p>
@@ -255,6 +273,14 @@ export default function BotPanel() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Configuration */}
                 <div className="glass-panel p-6 rounded-2xl border-white/5 space-y-6 relative overflow-hidden">
+                  {selectedBot.isRunning && (
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] z-20 flex items-center justify-center">
+                      <div className="bg-black/80 border border-accent-primary/50 px-4 py-2 rounded-lg flex items-center gap-3">
+                        <div className="w-2 h-2 bg-accent-primary rounded-full animate-ping"></div>
+                        <span className="text-[10px] text-accent-primary font-bold tracking-[0.2em]">NODE ACTIVE - SETTINGS LOCKED</span>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-xs font-bold uppercase tracking-widest text-accent-primary flex items-center gap-2">
                       <Settings className="w-4 h-4" /> Core Parameters

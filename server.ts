@@ -102,6 +102,7 @@ const botSchema = new mongoose.Schema({
   name: { type: String, default: 'New Bot' },
   status: { type: String, enum: ['online', 'offline'], default: 'offline' },
   lastSeen: { type: Date, default: Date.now },
+  isRunning: { type: Boolean, default: false },
   mode: { type: String, enum: ['email_create', 'upload'], default: 'email_create' },
   subMode: { type: String, enum: ['stocking', 'admin'], default: 'stocking' },
   limits: {
@@ -175,10 +176,10 @@ async function startServer() {
 
   app.post('/api/admin/bots/update', authenticateToken, isAdmin, async (req, res) => {
     try {
-      const { hwid, name, mode, subMode, limits } = req.body;
+      const { hwid, name, mode, subMode, limits, isRunning } = req.body;
       const bot = await Bot.findOneAndUpdate(
         { hwid },
-        { name, mode, subMode, limits },
+        { name, mode, subMode, limits, isRunning },
         { new: true }
       );
       res.json(bot);
@@ -190,21 +191,29 @@ async function startServer() {
   // --- Public Bot Routes (Used by toolbox.js) ---
   app.post('/api/bot/check-in', async (req, res) => {
     try {
-      const { hwid, logs, stats } = req.body;
+      const { hwid, logs, stats, completedCycles } = req.body;
       
-      // Update bot status to online and set lastSeen
+      const updateData: any = { 
+        status: 'online', 
+        lastSeen: Date.now(),
+        $push: { logs: { $each: logs || [], $slice: -50 } },
+        stats
+      };
+
+      // If bot finished its limit, auto-stop it on server
+      const botCheck = await Bot.findOne({ hwid });
+      if (botCheck && botCheck.isRunning && completedCycles >= botCheck.limits.emailsCount) {
+        updateData.isRunning = false;
+      }
+
       const bot = await Bot.findOneAndUpdate(
         { hwid },
-        { 
-          status: 'online', 
-          lastSeen: Date.now(),
-          $push: { logs: { $each: logs || [], $slice: -50 } }, // Keep last 50 logs
-          stats
-        },
+        updateData,
         { upsert: true, new: true }
       );
       
       res.json({
+        isRunning: bot.isRunning,
         mode: bot.mode,
         subMode: bot.subMode,
         limits: bot.limits,
