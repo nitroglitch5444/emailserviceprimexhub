@@ -1,5 +1,0 @@
-{
-  "name": "OTP Dashboard",
-  "description": "A dashboard to receive and display OTPs from emails via Cloudflare Workers.",
-  "requestFramePermissions": []
-}
