@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { ShoppingCart, LogOut, ShieldAlert, Mail, Monitor, User } from 'lucide-react';
+import { ShoppingCart, User, LogOut, ShieldAlert, Package, Mail } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { useCartStore } from '../store/cart';
 
@@ -10,7 +10,9 @@ export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  if (location.pathname === '/emails') return null;
+  if (location.pathname === '/emails') {
+    return null;
+  }
 
   const handleLogout = () => {
     logout();
@@ -24,17 +26,17 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <Link to="/" className="flex items-center gap-2 group">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-[0_0_15px_rgba(59,130,246,0.5)] transition-all duration-300">
-              <span className="font-bold text-white uppercase">P</span>
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-neon-blue to-neon-purple flex items-center justify-center shadow-[0_0_15px_rgba(0,243,255,0.5)] group-hover:shadow-[0_0_25px_rgba(188,19,254,0.6)] transition-all duration-300">
+              <span className="font-bold text-white">P</span>
             </div>
-            <span className="font-black text-xl tracking-tighter text-white uppercase">Prime X Hub</span>
+            <span className="font-bold text-lg sm:text-xl tracking-wider text-white text-glow-blue group-hover:text-glow-purple transition-all duration-300">PRIME X HUB</span>
           </Link>
 
-          <div className="flex items-center gap-6">
-            <Link to="/checkout" className="relative text-gray-400 hover:text-white transition-all hover:scale-110">
-              <ShoppingCart className="w-5 h-5" />
+          <div className="flex items-center gap-4 md:gap-6">
+            <Link to="/checkout" className="relative text-gray-300 hover:text-white transition-colors hover:scale-110 transform duration-200">
+              <ShoppingCart className="w-5 h-5 md:w-6 md:h-6" />
               {cartCount > 0 && (
-                <span className="absolute -top-2 -right-2 bg-blue-500 text-white text-[10px] font-black rounded-full w-4 h-4 flex items-center justify-center animate-pulse">
+                <span className="absolute -top-2 -right-2 bg-neon-red text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center shadow-[0_0_10px_rgba(255,0,60,0.8)] animate-pulse">
                   {cartCount}
                 </span>
               )}
@@ -42,27 +44,25 @@ export default function Navbar() {
 
             {user ? (
               <div className="flex items-center gap-4">
-                {user.isAdmin && (
-                  <Link to="/admin" className="text-xs font-black uppercase tracking-widest text-purple-400 hover:text-white transition-all flex items-center gap-2">
-                    <ShieldAlert className="w-4 h-4" />
-                    <span className="hidden md:inline">Admin</span>
+                {user.isAdmin ? (
+                  <Link to="/admin" className="text-neon-orange hover:text-white transition-colors flex items-center gap-1 hover:scale-105 transform duration-200">
+                    <ShieldAlert className="w-5 h-5" />
+                    <span className="hidden sm:inline text-sm font-medium">Admin</span>
+                  </Link>
+                ) : (
+                  <Link to="/emails" className="text-neon-green hover:text-white transition-colors flex items-center gap-1 hover:scale-105 transform duration-200">
+                    <Mail className="w-5 h-5" />
+                    <span className="hidden sm:inline text-sm font-medium">Emails</span>
                   </Link>
                 )}
-                <Link to="/emails" className="text-xs font-black uppercase tracking-widest text-accent-primary hover:text-white transition-all flex items-center gap-2">
-                  <Mail className="w-4 h-4" />
-                  <span className="hidden md:inline">Mailbox</span>
-                </Link>
-                <button 
-                  onClick={handleLogout}
-                  className="p-2 text-gray-400 hover:text-red-500 transition-colors"
-                >
+                <button onClick={handleLogout} className="text-gray-400 hover:text-neon-red transition-colors hover:scale-110 transform duration-200">
                   <LogOut className="w-5 h-5" />
                 </button>
               </div>
             ) : (
-              <Link to="/signup" className="px-5 py-2 bg-white/5 hover:bg-white/10 text-white rounded-lg text-xs font-black tracking-widest uppercase border border-white/10 transition-all flex items-center gap-2">
+              <Link to="/signup" className="flex items-center gap-2 text-sm font-medium text-white bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg transition-all border border-white/5 hover:shadow-[0_0_15px_rgba(255,255,255,0.2)] hover:scale-105 transform duration-200">
                 <User className="w-4 h-4" />
-                Login
+                Login / Signup
               </Link>
             )}
           </div>

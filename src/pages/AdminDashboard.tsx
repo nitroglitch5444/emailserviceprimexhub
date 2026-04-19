@@ -1,223 +1,309 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Users, ShoppingBag, Package, Mail, Settings, Plus, Trash2, CheckCircle, 
-  RefreshCw, TrendingUp, AlertCircle, Search, Edit3, Save, X, Database
-} from 'lucide-react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuthStore } from '../store/auth';
 import { useAdminStore } from '../store/adminStore';
-import { cn } from '../lib/utils';
+import { useNavigate, Navigate } from 'react-router-dom';
+import { Settings, Package, ShoppingBag, Mail, ShieldAlert, Database, Cpu } from 'lucide-react';
+import AutomationPanel from '../components/AutomationPanel';
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState('config');
-  const { token, user } = useAuthStore();
-  const { users, emails, aliases, config, orders, products, setUsers, setEmails, setAliases, setConfig, setOrders, setProducts } = useAdminStore();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { user, token } = useAuthStore();
+  const navigate = useNavigate();
+  const [activeTab, setActiveTabState] = useState(() => {
+    const hash = window.location.hash.replace('#', '');
+    return ['config', 'products', 'orders', 'emails', 'stocking', 'automation'].includes(hash) ? hash : 'config';
+  });
 
-  useEffect(() => {
-    fetchData();
-  }, [token]);
-
-  const fetchData = async () => {
-    if (!token) return;
-    setLoading(true);
-    try {
-      const [usersRes, emailsRes, aliasesRes, configRes, ordersRes, productsRes] = await Promise.all([
-        fetch('/api/admin/users', { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch('/api/admin/emails', { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch('/api/admin/aliases', { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch('/api/admin/config', { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch('/api/admin/orders', { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch('/api/products') // products can be fetched without admin for now but admin routes are better
-      ]);
-
-      if (usersRes.ok) setUsers(await usersRes.json());
-      if (emailsRes.ok) setEmails(await emailsRes.json());
-      if (aliasesRes.ok) setAliases(await aliasesRes.json());
-      if (configRes.ok) setConfig(await configRes.json());
-      if (ordersRes.ok) setOrders(await ordersRes.json());
-      if (productsRes.ok) setProducts(await productsRes.json());
-    } catch (err) {
-      setError('Failed to fetch admin data');
-    } finally {
-      setLoading(false);
-    }
+  const setActiveTab = (tab: string) => {
+    setActiveTabState(tab);
+    window.location.hash = tab;
   };
 
-  const updateConfig = async (key: string, value: any) => {
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace('#', '');
+      if (['config', 'products', 'orders', 'emails', 'stocking', 'automation'].includes(hash)) {
+        setActiveTabState(hash);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+  
+  const { config, products, orders, emails, aliases, setConfig, setProducts, setOrders, setEmails, setAliases } = useAdminStore();
+  const [emailLimit, setEmailLimit] = useState(10);
+  const [hasMoreEmails, setHasMoreEmails] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const fetchData = useCallback(async (currentEmailLimit?: number) => {
+    if (!token) return;
+    const headers = { 'Authorization': `Bearer ${token}` };
+    try {
+      const activeEmailLimit = currentEmailLimit || emailLimit;
+      const state = useAdminStore.getState();
+      if (activeTab === 'config') {
+        const res = await fetch('/api/admin/config', { headers, cache: 'no-store' });
+        const data = await res.json();
+        if (JSON.stringify(state.config) !== JSON.stringify(data)) setConfig(data);
+      } else if (activeTab === 'products') {
+        const res = await fetch('/api/products', { cache: 'no-store' }); // public route
+        const data = await res.json();
+        if (JSON.stringify(state.products) !== JSON.stringify(data)) setProducts(data);
+      } else if (activeTab === 'orders') {
+        const res = await fetch('/api/admin/orders', { headers, cache: 'no-store' });
+        const data = await res.json();
+        if (JSON.stringify(state.orders) !== JSON.stringify(data)) setOrders(data);
+      } else if (activeTab === 'emails') {
+        const res = await fetch(`/api/admin/emails?mode=admin&limit=${activeEmailLimit}`, { headers, cache: 'no-store' });
+        const data = await res.json();
+        setHasMoreEmails(data.length >= activeEmailLimit);
+        
+        // SMART MERGE: Add new emails, update existing ones, keep the rest
+        const map = new Map();
+        state.emails.forEach((e: any) => map.set(e._id, e));
+        data.forEach((e: any) => map.set(e._id, e));
+        
+        const merged = Array.from(map.values()).sort((a: any, b: any) => 
+          new Date(b.receivedAt || b.timestamp).getTime() - new Date(a.receivedAt || a.timestamp).getTime()
+        );
+
+        if (JSON.stringify(state.emails) !== JSON.stringify(merged)) {
+          setEmails(merged);
+        }
+      } else if (activeTab === 'stocking') {
+        const resAliases = await fetch('/api/admin/aliases', { headers, cache: 'no-store' });
+        const dataAliases = await resAliases.json();
+        if (JSON.stringify(state.aliases) !== JSON.stringify(dataAliases)) setAliases(dataAliases);
+        
+        const resEmails = await fetch(`/api/admin/emails?mode=stocking&limit=${activeEmailLimit}`, { headers, cache: 'no-store' });
+        const dataEmails = await resEmails.json();
+        setHasMoreEmails(dataEmails.length >= activeEmailLimit);
+        if (JSON.stringify(state.emails) !== JSON.stringify(dataEmails)) setEmails(dataEmails);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }, [activeTab, token, setConfig, setProducts, setOrders, setEmails, setAliases, emailLimit]);
+
+  const handleLoadMoreEmails = async () => {
+    setLoadingMore(true);
+    const newLimit = emailLimit + 20;
+    setEmailLimit(newLimit);
+    await fetchData(newLimit);
+    setLoadingMore(false);
+  };
+
+  useEffect(() => {
+    if (user && user.isAdmin) {
+      fetchData();
+      const interval = setInterval(fetchData, 3000); // Robust 3-second polling
+      return () => clearInterval(interval);
+    }
+  }, [user, activeTab, fetchData]);
+
+  if (!user || !user.isAdmin) {
+    return <Navigate to="/" replace />;
+  }
+
+  const handleModeChange = async (newMode: string) => {
+    const previousConfig = [...config];
+    const newConfig = [...config];
+    const modeIndex = newConfig.findIndex(c => c.key === 'emailMode');
+    if (modeIndex >= 0) {
+      newConfig[modeIndex] = { ...newConfig[modeIndex], value: newMode };
+    } else {
+      newConfig.push({ key: 'emailMode', value: newMode });
+    }
+    setConfig(newConfig);
+
     try {
       const res = await fetch('/api/admin/config', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}` 
-        },
-        body: JSON.stringify({ key, value })
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ key: 'emailMode', value: newMode })
       });
-      if (res.ok) fetchData();
+      if (!res.ok) throw new Error('Failed');
+      fetchData();
     } catch (err) {
-      console.error('Failed to update config');
+      console.error(err);
+      setConfig(previousConfig);
     }
   };
 
-  const completeOrder = async (orderId: string) => {
+  const handleAddProduct = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const productData = {
+      name: formData.get('name'),
+      description: formData.get('description'),
+      price: Number(formData.get('price')),
+      thumbnail: formData.get('thumbnail'),
+      type: formData.get('type'),
+      stock: Number(formData.get('stock') || 0)
+    };
+
     try {
-      const res = await fetch(`/api/admin/orders/${orderId}/complete`, {
+      await fetch('/api/admin/products', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(productData)
+      });
+      e.currentTarget.reset();
+      fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteEmail = async (id: string) => {
+    const previousEmails = [...emails];
+    setEmails(emails.filter(e => e._id !== id));
+    try {
+      const res = await fetch(`/api/admin/emails/${id}`, {
+        method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (res.ok) fetchData();
+      if (!res.ok) throw new Error('Failed');
+      fetchData();
     } catch (err) {
-      console.error('Failed to complete order');
+      console.error(err);
+      setEmails(previousEmails);
     }
   };
 
-  if (!user?.isAdmin) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] px-4 text-center">
-        <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mb-6 border border-red-500/20">
-          <AlertCircle className="w-10 h-10 text-red-500" />
-        </div>
-        <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Access Denied</h1>
-        <p className="text-gray-400 font-medium">You need administrator privileges to view this page.</p>
-      </div>
-    );
-  }
+  const currentMode = Array.isArray(config) ? (config.find(c => c.key === 'emailMode')?.value || 'STOCKING') : 'STOCKING';
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 md:py-12">
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
-        <div>
-          <h1 className="text-4xl md:text-5xl font-black text-white tracking-tighter mb-4 premium-gradient-text">
-            ADMIN PANEL
-          </h1>
-          <p className="text-gray-400 font-medium text-lg">Manage Nexus Hub operations and monitoring.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={fetchData}
-            className="p-3 bg-white/5 hover:bg-white/10 text-white rounded-xl border border-premium-border transition-all active:scale-95"
-          >
-            <RefreshCw className={cn("w-6 h-6", loading && "animate-spin")} />
-          </button>
-        </div>
+    <div className="pt-24 pb-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+      <h1 className="text-3xl font-bold mb-8 text-white flex items-center gap-3">
+        <ShieldAlert className="w-8 h-8 text-accent-primary" /> <span className="premium-gradient-text">Admin Control Panel</span>
+      </h1>
+
+      <div className="flex overflow-x-auto no-scrollbar gap-4 mb-8 border-b border-premium-border pb-4 items-center whitespace-nowrap">
+        <button onClick={() => setActiveTab('config')} className={`shrink-0 px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${activeTab === 'config' ? 'bg-accent-primary text-white md:shadow-[0_0_15px_rgba(59,130,246,0.5)] border border-accent-primary/50' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent hover:border-premium-border'}`}>
+          <Settings className="w-4 h-4" /> Config
+        </button>
+        <button onClick={() => setActiveTab('products')} className={`shrink-0 px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${activeTab === 'products' ? 'bg-accent-primary text-white md:shadow-[0_0_15px_rgba(59,130,246,0.5)] border border-accent-primary/50' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent hover:border-premium-border'}`}>
+          <Package className="w-4 h-4" /> Products
+        </button>
+        <button onClick={() => setActiveTab('orders')} className={`shrink-0 px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${activeTab === 'orders' ? 'bg-accent-primary text-white md:shadow-[0_0_15px_rgba(59,130,246,0.5)] border border-accent-primary/50' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent hover:border-premium-border'}`}>
+          <ShoppingBag className="w-4 h-4" /> Orders
+        </button>
+        <button onClick={() => setActiveTab('emails')} className={`shrink-0 px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${activeTab === 'emails' ? 'bg-accent-primary text-white md:shadow-[0_0_15px_rgba(59,130,246,0.5)] border border-accent-primary/50' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent hover:border-premium-border'}`}>
+          <Mail className="w-4 h-4" /> Admin Inbox
+        </button>
+        <button onClick={() => setActiveTab('stocking')} className={`shrink-0 px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${activeTab === 'stocking' ? 'bg-accent-primary text-white md:shadow-[0_0_15px_rgba(59,130,246,0.5)] border border-accent-primary/50' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent hover:border-premium-border'}`}>
+          <Database className="w-4 h-4" /> Stocking Area
+        </button>
+        <button onClick={() => setActiveTab('automation')} className={`shrink-0 px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${activeTab === 'automation' ? 'bg-accent-primary text-white md:shadow-[0_0_15px_rgba(59,130,246,0.5)] border border-accent-primary/50' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent hover:border-premium-border'}`}>
+          <Cpu className="w-4 h-4" /> Bot Control
+        </button>
+        <button onClick={() => navigate('/emails')} className={`shrink-0 ml-auto px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 bg-white/5 text-gray-300 hover:bg-white/10 border border-transparent hover:border-premium-border`}>
+          <Mail className="w-4 h-4" /> User Emails
+        </button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4 mb-12">
-        {[
-          { id: 'config', label: 'Config', icon: Settings },
-          { id: 'orders', label: 'Orders', icon: ShoppingBag },
-          { id: 'users', label: 'Users', icon: Users },
-          { id: 'email-ids', label: 'Email IDs', icon: Database },
-          { id: 'emails', label: 'Emails', icon: Mail }
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={cn(
-              "flex flex-col items-center gap-3 p-4 md:p-6 rounded-2xl border transition-all duration-300",
-              activeTab === tab.id 
-                ? "bg-accent-primary/10 border-accent-primary text-accent-primary shadow-[0_0_20px_rgba(59,130,246,0.2)]" 
-                : "bg-white/5 border-premium-border text-gray-500 hover:text-white hover:border-white/20"
-            )}
-          >
-            <tab.icon className="w-6 h-6 md:w-8 md:h-8" />
-            <span className="font-bold text-xs md:text-sm tracking-widest uppercase">{tab.label}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="min-h-[500px]">
+      <div className="glass-panel p-6">
         {activeTab === 'config' && (
-          <div className="space-y-6">
-            <div className="glass-panel p-8">
-              <h3 className="text-2xl font-bold text-white mb-8 tracking-tight flex items-center gap-3">
-                <Settings className="w-6 h-6 text-accent-primary" />
-                System Configuration
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div>
-                  <label className="block text-gray-400 text-sm font-bold uppercase tracking-wider mb-2">Email Reception Mode</label>
-                  <select 
-                    value={config.find(c => c.key === 'emailMode')?.value || 'STOCKING'}
-                    onChange={(e) => updateConfig('emailMode', e.target.value)}
-                    className="w-full bg-black/50 border border-premium-border rounded-xl px-4 py-3 text-white focus:border-accent-primary outline-none transition-all"
-                  >
-                    <option value="STOCKING">STOCKING (Pending → Stock)</option>
-                    <option value="ADMIN">ADMIN (Direct to Admin)</option>
-                    <option value="OFF">OFF (Discard unknown)</option>
-                  </select>
-                  <p className="text-xs text-gray-500 mt-2 font-medium">Controls how new incoming emails from unknown aliases are handled.</p>
-                </div>
-              </div>
+          <div>
+            <h2 className="text-xl font-bold text-white mb-6">Email Processing Mode</h2>
+            <div className="flex overflow-x-auto no-scrollbar gap-4 pb-2 whitespace-nowrap">
+              <button 
+                onClick={() => handleModeChange('OFF')}
+                className={`shrink-0 px-6 py-3 rounded-lg font-bold transition-all border ${currentMode === 'OFF' ? 'bg-red-500/20 text-red-400 border-red-500/50 md:shadow-[0_0_15px_rgba(239,68,68,0.3)]' : 'bg-black/50 border-premium-border text-gray-400 hover:bg-white/5 hover:border-gray-500'}`}
+              >
+                OFF (Admin Inbox)
+              </button>
+              <button 
+                onClick={() => handleModeChange('STOCKING')}
+                className={`shrink-0 px-6 py-3 rounded-lg font-bold transition-all border ${currentMode === 'STOCKING' ? 'bg-blue-500/20 text-blue-400 border-blue-500/50 md:shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-black/50 border-premium-border text-gray-400 hover:bg-white/5 hover:border-gray-500'}`}
+              >
+                STOCKING (7 Days Pending)
+              </button>
+              <button 
+                onClick={() => handleModeChange('ADMIN')}
+                className={`shrink-0 px-6 py-3 rounded-lg font-bold transition-all border ${currentMode === 'ADMIN' ? 'bg-purple-500/20 text-purple-400 border-purple-500/50 md:shadow-[0_0_15px_rgba(168,85,247,0.3)]' : 'bg-black/50 border-premium-border text-gray-400 hover:bg-white/5 hover:border-gray-500'}`}
+              >
+                ADMIN (Direct to Inbox)
+              </button>
             </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="glass-panel p-6 border-l-4 border-l-blue-500">
-                <p className="text-gray-400 text-sm font-bold uppercase tracking-wider mb-1">Total Users</p>
-                <p className="text-4xl font-black text-white">{users.length}</p>
-              </div>
-              <div className="glass-panel p-6 border-l-4 border-l-purple-500">
-                <p className="text-gray-400 text-sm font-bold uppercase tracking-wider mb-1">Total Orders</p>
-                <p className="text-4xl font-black text-white">{orders.length}</p>
-              </div>
-              <div className="glass-panel p-6 border-l-4 border-l-emerald-500">
-                <p className="text-gray-400 text-sm font-bold uppercase tracking-wider mb-1">Email Aliases</p>
-                <p className="text-4xl font-black text-white">{aliases.length}</p>
-              </div>
+            <p className="mt-4 text-sm text-gray-400">Current Mode: <strong className="text-white">{currentMode}</strong></p>
+          </div>
+        )}
+
+        {activeTab === 'products' && (
+          <div>
+            <h2 className="text-xl font-bold text-white mb-6">Add New Product</h2>
+            <form onSubmit={handleAddProduct} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-12">
+              <input name="name" placeholder="Product Name" required className="bg-black/50 border border-premium-border rounded-lg p-3 text-white focus:border-accent-primary outline-none transition-colors" />
+              <input name="price" type="number" step="0.01" placeholder="Price ($)" required className="bg-black/50 border border-premium-border rounded-lg p-3 text-white focus:border-accent-primary outline-none transition-colors" />
+              <input name="thumbnail" placeholder="Image URL" className="bg-black/50 border border-premium-border rounded-lg p-3 text-white focus:border-accent-primary outline-none transition-colors" />
+              <select name="type" className="bg-black/50 border border-premium-border rounded-lg p-3 text-white focus:border-accent-primary outline-none transition-colors">
+                <option value="activated_email">Activated Email (Auto Stock)</option>
+                <option value="account">Account (Manual Stock)</option>
+                <option value="service">Service</option>
+              </select>
+              <input name="stock" type="number" placeholder="Manual Stock (Leave 0 for Auto)" className="bg-black/50 border border-premium-border rounded-lg p-3 text-white focus:border-accent-primary outline-none transition-colors" />
+              <textarea name="description" placeholder="Description" className="bg-black/50 border border-premium-border rounded-lg p-3 text-white md:col-span-2 focus:border-accent-primary outline-none transition-colors"></textarea>
+              <button type="submit" className="bg-accent-primary text-white font-bold py-3 rounded-lg md:col-span-2 hover:bg-blue-600 transition-colors md:shadow-[0_0_15px_rgba(59,130,246,0.5)]">Add Product</button>
+            </form>
+
+            <h2 className="text-xl font-bold text-white mb-4">Current Products</h2>
+            <div className="overflow-x-auto rounded-xl border border-premium-border">
+              <table className="w-full text-left text-gray-300">
+                <thead className="bg-black/50 border-b border-premium-border">
+                  <tr>
+                    <th className="p-3">Name</th>
+                    <th className="p-3">Type</th>
+                    <th className="p-3">Price</th>
+                    <th className="p-3">Stock</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.isArray(products) && products.map(p => (
+                    <tr key={p._id} className="border-b border-premium-border hover:bg-white/5 transition-colors">
+                      <td className="p-3 font-medium text-white">{p.name}</td>
+                      <td className="p-3">
+                        <span className="bg-white/5 px-2 py-1 rounded text-xs font-medium text-gray-300 border border-premium-border">
+                          {p.type}
+                        </span>
+                      </td>
+                      <td className="p-3 font-mono text-accent-primary">${p.price}</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-1 rounded text-xs font-bold border ${p.stock > 0 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
+                          {p.stock}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
 
         {activeTab === 'orders' && (
-          <div className="glass-panel overflow-hidden">
-            <div className="p-8 border-b border-premium-border">
-              <h3 className="text-2xl font-bold text-white tracking-tight">Recent Orders</h3>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="bg-white/5 text-gray-400 text-sm font-bold uppercase tracking-widest">
-                    <th className="px-8 py-4">User</th>
-                    <th className="px-8 py-4">Amount</th>
-                    <th className="px-8 py-4">Status</th>
-                    <th className="px-8 py-4">Actions</th>
+          <div>
+            <h2 className="text-xl font-bold text-white mb-4">Recent Orders</h2>
+            <div className="overflow-x-auto no-scrollbar rounded-xl border border-premium-border">
+              <table className="w-full text-left text-gray-300">
+                <thead className="bg-black/50 border-b border-premium-border">
+                  <tr>
+                    <th className="p-3">ID</th>
+                    <th className="p-3">User</th>
+                    <th className="p-3">Amount</th>
+                    <th className="p-3">Status</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-premium-border">
-                  {orders.map((order) => (
-                    <tr key={order._id} className="hover:bg-white/5 transition-colors">
-                      <td className="px-8 py-6">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-white">{order.userId?.username || 'Guest'}</span>
-                          <span className="text-xs text-gray-500">{order._id}</span>
-                        </div>
-                      </td>
-                      <td className="px-8 py-6">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-white">${order.totalAmount}</span>
-                          <span className="text-xs text-accent-primary font-bold">{order.exactCryptoAmount} {order.cryptoCurrency}</span>
-                        </div>
-                      </td>
-                      <td className="px-8 py-6">
-                        <span className={cn(
-                          "px-3 py-1 rounded-full text-xs font-black tracking-widest border",
-                          order.status === 'completed' ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" :
-                          order.status === 'pending' ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/20" :
-                          "bg-red-500/10 text-red-500 border-red-500/20"
-                        )}>
-                          {order.status.toUpperCase()}
+                <tbody>
+                  {Array.isArray(orders) && orders.map(o => (
+                    <tr key={o._id} className="border-b border-premium-border hover:bg-white/5 transition-colors">
+                      <td className="p-3 font-mono text-xs">{o._id}</td>
+                      <td className="p-3">{o.userId?.username || 'Unknown'}</td>
+                      <td className="p-3">${o.totalAmount} ({o.exactCryptoAmount} {o.cryptoCurrency})</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-1 rounded text-xs font-bold border ${o.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/20 text-amber-500 border-amber-500/30'}`}>
+                          {o.status.toUpperCase()}
                         </span>
-                      </td>
-                      <td className="px-8 py-6 text-right">
-                        {order.status === 'pending' && (
-                          <button 
-                            onClick={() => completeOrder(order._id)}
-                            className="bg-accent-primary hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all active:scale-95 shadow-lg shadow-blue-500/20"
-                          >
-                            Mark Complete
-                          </button>
-                        )}
                       </td>
                     </tr>
                   ))}
@@ -227,48 +313,115 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {activeTab === 'users' && (
-          <div className="glass-panel overflow-hidden">
-             <div className="p-8 border-b border-premium-border flex justify-between items-center">
-              <h3 className="text-2xl font-bold text-white tracking-tight">Registered Users</h3>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="bg-white/5 text-gray-400 text-sm font-bold uppercase tracking-widest">
-                    <th className="px-8 py-4">User Info</th>
-                    <th className="px-8 py-4">Role</th>
-                    <th className="px-8 py-4">Joined</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-premium-border">
-                  {users.map((u) => (
-                    <tr key={u._id} className="hover:bg-white/5 transition-colors">
-                      <td className="px-8 py-6">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-white text-lg">{u.username}</span>
-                          <span className="text-sm text-gray-400">{u.email}</span>
-                        </div>
-                      </td>
-                      <td className="px-8 py-6">
-                        <span className={cn(
-                          "px-3 py-1 rounded-full text-xs font-black tracking-widest border",
-                          u.isAdmin ? "bg-purple-500/10 text-purple-400 border-purple-500/20" : "bg-gray-500/10 text-gray-400 border-gray-500/20"
-                        )}>
-                          {u.isAdmin ? 'ADMIN' : 'USER'}
-                        </span>
-                      </td>
-                      <td className="px-8 py-6 text-gray-400 text-sm font-medium">
-                        {new Date(u.createdAt).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {activeTab === 'emails' && (
+          <div>
+            <h2 className="text-xl font-bold text-white mb-4">Admin Inbox</h2>
+            <div className="space-y-4">
+              {!Array.isArray(emails) || emails.length === 0 ? <p className="text-gray-500">No admin emails found.</p> : emails.map(e => (
+                <div key={e._id} className="bg-black/50 p-4 rounded-xl border border-premium-border hover:border-accent-primary transition-colors">
+                  <div className="flex justify-between items-start mb-1">
+                    <div className="font-bold text-white">{e.subject || 'No Subject'}</div>
+                    <div className="flex items-center gap-3">
+                      <span className={`px-2 py-1 rounded text-xs font-bold ${e.status === 'stock' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : e.status === 'admin' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'}`}>
+                        {e.status.toUpperCase()}
+                      </span>
+                      <button onClick={() => handleDeleteEmail(e._id)} className="text-red-500 hover:text-red-400 text-sm font-medium transition-colors">Delete</button>
+                    </div>
+                  </div>
+                  <div className="text-sm text-gray-400 mb-2">From: {e.from} | To: {e.recipientAlias}</div>
+                  <div className="text-sm text-gray-300 font-mono bg-black/80 p-3 rounded-lg border border-premium-border">{e.otp ? `OTP: ${e.otp}` : 'No OTP detected'}</div>
+                </div>
+              ))}
+              
+              {hasMoreEmails && emails.length > 0 && (
+                <button 
+                  onClick={handleLoadMoreEmails}
+                  disabled={loadingMore}
+                  className="w-full py-3 bg-white/5 hover:bg-white/10 border border-dashed border-premium-border rounded-xl text-gray-400 text-sm font-medium transition-all"
+                >
+                  {loadingMore ? 'Loading...' : 'Load More Emails'}
+                </button>
+              )}
             </div>
           </div>
         )}
+
+        {activeTab === 'stocking' && (
+          <div>
+            <h2 className="text-xl font-bold text-white mb-4">Stocking Area</h2>
+            
+            <div className="mb-8">
+              <h3 className="text-lg font-bold text-white mb-4">Email Aliases</h3>
+              <div className="overflow-x-auto no-scrollbar rounded-xl border border-premium-border">
+                <table className="w-full text-left text-gray-300">
+                  <thead className="bg-black/50 border-b border-premium-border">
+                    <tr>
+                      <th className="p-3">Alias</th>
+                      <th className="p-3">Status</th>
+                      <th className="p-3">Assigned To</th>
+                      <th className="p-3">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {aliases.map(a => (
+                      <tr key={a._id} className="border-b border-premium-border hover:bg-white/5 transition-colors">
+                        <td className="p-3">{a.alias}</td>
+                        <td className="p-3">
+                          <span className={`text-xs font-bold px-2 py-1 rounded uppercase border ${
+                            a.status === 'admin' ? 'bg-purple-500/20 text-purple-400 border-purple-500/30' :
+                            a.status === 'stocked' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                            a.status === 'assigned' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                            'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                          }`}>
+                            {a.status}
+                          </span>
+                        </td>
+                        <td className="p-3">{a.assignedTo ? a.assignedTo.username : 'None'}</td>
+                        <td className="p-3">{new Date(a.createdAt).toLocaleDateString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-bold text-white mb-4">Stocking Emails</h3>
+              <div className="space-y-4">
+                {!Array.isArray(emails) || emails.length === 0 ? <p className="text-gray-500">No stocking emails found.</p> : emails.map(e => (
+                  <div key={e._id} className="bg-black/50 p-4 rounded-xl border border-premium-border hover:border-accent-primary transition-colors">
+                    <div className="flex justify-between items-start mb-1">
+                      <div className="font-bold text-white">{e.subject || 'No Subject'}</div>
+                      <div className="flex items-center gap-3">
+                        <span className={`px-2 py-1 rounded text-xs font-bold ${e.status === 'stock' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : e.status === 'admin' ? 'bg-purple-500/20 text-purple-400 border-purple-500/30' : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'}`}>
+                          {e.status.toUpperCase()}
+                        </span>
+                        <button onClick={() => handleDeleteEmail(e._id)} className="text-red-500 hover:text-red-400 text-sm font-medium transition-colors">Delete</button>
+                      </div>
+                    </div>
+                    <div className="text-sm text-gray-400 mb-2">From: {e.from} | To: {e.recipientAlias}</div>
+                    <div className="text-sm text-gray-300 font-mono bg-black/80 p-3 rounded-lg border border-premium-border">{e.otp ? `OTP: ${e.otp}` : 'No OTP detected'}</div>
+                  </div>
+                ))}
+                
+                {hasMoreEmails && emails.length > 0 && (
+                  <button 
+                    onClick={handleLoadMoreEmails}
+                    disabled={loadingMore}
+                    className="w-full py-3 bg-white/5 hover:bg-white/10 border border-dashed border-premium-border rounded-xl text-gray-400 text-sm font-medium transition-all"
+                  >
+                    {loadingMore ? 'Loading...' : 'Load More Emails'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'automation' && <AutomationPanel />}
       </div>
     </div>
   );
 }
+
+

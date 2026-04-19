@@ -1,31 +1,27 @@
 import { create } from 'zustand';
 
 interface AdminState {
-  users: any[];
+  config: any[];
+  products: any[];
+  orders: any[];
   emails: any[];
   aliases: any[];
-  config: any[];
-  orders: any[];
-  products: any[];
-  setUsers: (users: any[]) => void;
-  setEmails: (emails: any[]) => void;
-  setAliases: (aliases: any[]) => void;
-  setConfig: (config: any[]) => void;
-  setOrders: (orders: any[]) => void;
-  setProducts: (products: any[]) => void;
+  setConfig: (data: any[]) => void;
+  setProducts: (data: any[]) => void;
+  setOrders: (data: any[]) => void;
+  setEmails: (data: any[]) => void;
+  setAliases: (data: any[]) => void;
 }
 
 export const useAdminStore = create<AdminState>((set) => ({
-  users: [],
+  config: [],
+  products: [],
+  orders: [],
   emails: [],
   aliases: [],
-  config: [],
-  orders: [],
-  products: [],
-  setUsers: (users) => set({ users }),
-  setEmails: (emails) => set({ emails }),
-  setAliases: (aliases) => set({ aliases }),
-  setConfig: (config) => set({ config }),
-  setOrders: (orders) => set({ orders }),
-  setProducts: (products) => set({ products }),
+  setConfig: (data) => set({ config: data }),
+  setProducts: (data) => set({ products: data }),
+  setOrders: (data) => set({ orders: data }),
+  setEmails: (data) => set({ emails: data }),
+  setAliases: (data) => set({ aliases: data }),
 }));

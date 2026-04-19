@@ -6,28 +6,27 @@ import { simpleParser } from 'mailparser';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import cookieParser from 'cookie-parser';
-import { Server } from 'socket.io';
-import http from 'http';
 
 // --- MongoDB Setup ---
-const MONGO_URI = process.env.MONGO_URI;
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus-hub';
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-nexus-hub-2026';
 
-if (!MONGO_URI) {
-  console.error('CRITICAL: MONGO_URI is not defined in environment variables.');
-  console.error('Please add MONGO_URI to your Secrets in the Settings menu.');
+if (process.env.MONGO_URI && process.env.MONGO_URI !== 'YOUR_MONGO_URI_HERE') {
+  mongoose.connect(process.env.MONGO_URI)
+    .then(() => console.log('Connected to MongoDB'))
+    .catch(err => console.error('MongoDB connection error:', err));
 } else {
-  mongoose.connect(MONGO_URI)
-    .then(() => console.log('Successfully connected to MongoDB Atlas'))
-    .catch(err => {
-      console.error('MongoDB connection error details:', err.message);
-      if (err.message.includes('ECONNREFUSED')) {
-        console.error('Try checking if your IP address is whitelisted in MongoDB Atlas.');
-      }
-    });
+  console.warn('MONGO_URI is not set. MongoDB will not be connected.');
 }
 
 // --- Schemas ---
+const automationLogSchema = new mongoose.Schema({
+  message: { type: String, required: true },
+  level: { type: String, enum: ['info', 'warn', 'error', 'success'], default: 'info' },
+  createdAt: { type: Date, default: Date.now }
+});
+const AutomationLog = mongoose.model('AutomationLog', automationLogSchema);
+
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   email: { type: String, required: true, unique: true },
@@ -108,15 +107,6 @@ mongoose.connection.once('open', initConfig);
 // --- Middleware ---
 const authenticateToken = (req: any, res: any, next: any) => {
   const authHeader = req.headers['authorization'];
-  const xAuthKey = req.headers['x-auth-key'];
-  const apiSecret = process.env.API_SECRET_KEY || 'keyxxx';
-
-  // Check for API Secret First (prioritize bot/system access)
-  if ((authHeader && authHeader === `Bearer ${apiSecret}`) || (xAuthKey && xAuthKey === apiSecret)) {
-    req.user = { id: 'system', username: 'system', isAdmin: true };
-    return next();
-  }
-
   let token = authHeader && authHeader.split(' ')[1];
   
   // Also check for token in cookies
@@ -146,8 +136,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '25mb' }));
-  app.use(express.urlencoded({ limit: '25mb', extended: true }));
+  app.use(express.json({ limit: '25MB' }));
+  app.use(express.urlencoded({ limit: '25MB', extended: true }));
   app.use(cookieParser());
 
   // Middleware to normalize double slashes in URLs
@@ -167,10 +157,9 @@ async function startServer() {
       const existingUser = await User.findOne({ $or: [{ username }, { email }] });
       if (existingUser) return res.status(400).json({ error: 'Username or email already exists' });
 
-      // Check if user should be admin based on ENV variables
+      // Check if user should be admin based on ENV variables or specific email
       let isUserAdmin = false;
-      const adminEmail = process.env.ADMIN_EMAIL;
-      if (adminEmail && email === adminEmail) {
+      if (email === 'rracfo@gmail.com') {
         isUserAdmin = true;
       }
       for (let i = 1; i <= 5; i++) {
@@ -206,35 +195,13 @@ async function startServer() {
       if (!identifier || !password) return res.status(400).json({ error: 'Identifier and password required' });
 
       const user = await User.findOne({ $or: [{ username: identifier }, { email: identifier }] });
-      if (!user) {
-        // Fallback for bootstrap admin if no users exist or matching env credentials
-        const adminEmail = process.env.ADMIN_EMAIL;
-        const adminPassword = process.env.ADMIN_PASSWORD;
-        if (adminEmail && identifier === adminEmail && adminPassword && password === adminPassword) {
-           const token = jwt.sign({ id: 'bootstrap-admin', username: 'admin', isAdmin: true }, JWT_SECRET, { expiresIn: '7d' });
-           res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000, path: '/' });
-           return res.json({ token, user: { id: 'bootstrap-admin', username: 'admin', email: adminEmail, isAdmin: true } });
-        }
-        return res.status(400).json({ error: 'Invalid credentials' });
-      }
+      if (!user) return res.status(400).json({ error: 'Invalid credentials' });
 
       const validPassword = await bcrypt.compare(password, user.password);
-      if (!validPassword) {
-        // Even if user exists, check against admin env for bootstrap-style login if it matches
-        const adminEmail = process.env.ADMIN_EMAIL;
-        const adminPassword = process.env.ADMIN_PASSWORD;
-        if (adminEmail && identifier === adminEmail && adminPassword && password === adminPassword) {
-           const token = jwt.sign({ id: user._id, username: user.username, isAdmin: true }, JWT_SECRET, { expiresIn: '7d' });
-           res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000, path: '/' });
-           if (!user.isAdmin) { user.isAdmin = true; await user.save(); }
-           return res.json({ token, user: { id: user._id, username: user.username, email: user.email, isAdmin: user.isAdmin } });
-        }
-        return res.status(400).json({ error: 'Invalid credentials' });
-      }
+      if (!validPassword) return res.status(400).json({ error: 'Invalid credentials' });
 
-      // Auto-upgrade to admin if email matches environment variable
-      const adminEmail = process.env.ADMIN_EMAIL;
-      if (adminEmail && user.email === adminEmail && !user.isAdmin) {
+      // Auto-upgrade to admin if email matches
+      if (user.email === 'rracfo@gmail.com' && !user.isAdmin) {
         user.isAdmin = true;
         await user.save();
       }
@@ -256,7 +223,7 @@ async function startServer() {
 
   app.get('/api/auth/me', authenticateToken, async (req: any, res) => {
     try {
-      const user = await User.findById(req.user.id).select('-password').lean();
+      const user = await User.findById(req.user.id).select('-password');
       if (!user) return res.status(404).json({ error: 'User not found' });
       res.json({ user });
     } catch (err) {
@@ -279,8 +246,7 @@ async function startServer() {
         otp: { $ne: null, $exists: true } 
       })
       .sort({ receivedAt: -1 })
-      .limit(4)
-      .lean();
+      .limit(4);
 
       if (!latestEmails || latestEmails.length === 0) {
         return res.status(404).json({ error: 'No OTP found' });
@@ -307,11 +273,10 @@ async function startServer() {
     try {
       // Auto-update stocking aliases to stocked if older than 7 days
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      const aliasesToStock = await EmailAlias.find({ status: 'stocking', createdAt: { $lte: sevenDaysAgo } });
+      const aliasesToStock = await EmailAlias.find({ status: 'stocking', createdAt: { $lte: sevenDaysAgo } }).lean();
       
-      for (const alias of aliasesToStock) {
-        alias.status = 'stocked';
-        await alias.save();
+      for (const alias of aliasesToStock as any) {
+        await EmailAlias.updateOne({ _id: alias._id }, { $set: { status: 'stocked' } });
         // Update all emails for this alias
         await Email.updateMany({ recipientAlias: alias.alias, status: 'pending' }, { $set: { status: 'stock' } });
       }
@@ -321,7 +286,7 @@ async function startServer() {
       // Calculate dynamic stock for 'activated_email' products
       const stockCount = await EmailAlias.countDocuments({ status: 'stocked' });
       
-      const productsWithDynamicStock = products.map((p: any) => {
+      const productsWithDynamicStock = products.map(p => {
         if (p.type === 'activated_email') {
           return { ...p, stock: stockCount };
         }
@@ -371,12 +336,37 @@ async function startServer() {
   // --- User Emails Route ---
   app.get('/api/my-emails', authenticateToken, async (req: any, res) => {
     try {
+      const limit = parseInt(req.query.limit as string) || 20; // Default to 20 for reliability
+      const skip = parseInt(req.query.skip as string) || 0;
+
       let query: any = { assignedTo: req.user.id };
       if (req.user.isAdmin) {
         query = { $or: [{ assignedTo: req.user.id }, { status: 'admin' }, { status: 'pending' }] };
       }
-      const emails = await Email.find(query).sort({ receivedAt: -1 }).limit(20).lean();
+      
+      const emails = await Email.find(query)
+        .sort({ receivedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+        
       res.json(emails);
+    } catch (err) {
+      console.error('[API MY-EMAILS] Error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  // Keep single fetch just in case, but standard list will now have everything
+  app.get('/api/my-emails/:id', authenticateToken, async (req: any, res) => {
+    try {
+      let query: any = { _id: req.params.id, assignedTo: req.user.id };
+      if (req.user.isAdmin) {
+        query = { _id: req.params.id };
+      }
+      const email = await Email.findOne(query).lean();
+      if (!email) return res.status(404).json({ error: 'Email not found' });
+      res.json(email);
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
     }
@@ -433,7 +423,7 @@ async function startServer() {
   // --- Admin Routes ---
   app.get('/api/admin/users', authenticateToken, isAdmin, async (req, res) => {
     try {
-      const users = await User.find().select('-password').lean();
+      const users = await User.find().select('-password');
       res.json(users);
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
@@ -474,7 +464,7 @@ async function startServer() {
 
   app.get('/api/admin/config', authenticateToken, isAdmin, async (req, res) => {
     try {
-      const config = await Config.find().lean();
+      const config = await Config.find();
       res.json(config);
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
@@ -503,7 +493,7 @@ async function startServer() {
 
   app.get('/api/admin/orders', authenticateToken, isAdmin, async (req, res) => {
     try {
-      const orders = await Order.find().populate('userId', 'username email').sort({ createdAt: -1 }).lean();
+      const orders = await Order.find().populate('userId', 'username email').sort({ createdAt: -1 });
       res.json(orders);
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
@@ -546,6 +536,9 @@ async function startServer() {
   app.get('/api/admin/emails', authenticateToken, isAdmin, async (req, res) => {
     try {
       const mode = req.query.mode;
+      const limit = parseInt(req.query.limit as string) || 20; // Default to 20
+      const skip = parseInt(req.query.skip as string) || 0;
+
       let query: any = { status: { $ne: 'sold' } };
       
       if (mode === 'admin') {
@@ -554,9 +547,15 @@ async function startServer() {
         query.status = { $in: ['pending', 'stock'] };
       }
       
-      const emails = await Email.find(query).sort({ receivedAt: -1 }).limit(20).lean();
+      const emails = await Email.find(query)
+        .sort({ receivedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+        
       res.json(emails);
     } catch (err) {
+      console.error('[API ADMIN-EMAILS] Error:', err);
       res.status(500).json({ error: 'Server error' });
     }
   });
@@ -588,29 +587,50 @@ async function startServer() {
     }
   });
 
-  // --- Bot Control Routes ---
-  app.get('/api/bot/devices', authenticateToken, isAdmin, (req, res) => {
-    res.json(Array.from(connectedDevices.values()));
+  // --- Automation Routes ---
+  let currentAutomationCommand: string | null = null;
+  let automationIsRunning = false;
+
+  app.get('/api/admin/automation/status', authenticateToken, isAdmin, async (req, res) => {
+    res.json({ command: currentAutomationCommand, isRunning: automationIsRunning });
   });
 
-  app.post('/api/bot/start', authenticateToken, isAdmin, (req, res) => {
-    const { duration, deviceId } = req.body;
-    if (deviceId) {
-      io.to(deviceId).emit('start_loop', { duration });
-    } else {
-      io.emit('start_loop', { duration });
+  app.post('/api/admin/automation/command', authenticateToken, isAdmin, async (req, res) => {
+    const { command } = req.body;
+    if (command === 'stop') {
+      currentAutomationCommand = 'stop';
+    } else if (command.startsWith('start')) {
+      currentAutomationCommand = command;
+      // Clear logs when starting new
+      await AutomationLog.deleteMany({});
     }
-    res.json({ success: true });
+    res.json({ success: true, command: currentAutomationCommand });
   });
 
-  app.post('/api/bot/stop', authenticateToken, isAdmin, (req, res) => {
-    const { deviceId } = req.body;
-    if (deviceId) {
-      io.to(deviceId).emit('stop_loop');
-    } else {
-      io.emit('stop_loop');
+  app.get('/api/admin/automation/logs', authenticateToken, isAdmin, async (req, res) => {
+    try {
+      const logs = await AutomationLog.find().sort({ createdAt: -1 }).limit(50);
+      res.json(logs.reverse());
+    } catch (err) {
+      res.status(500).json({ error: 'Server error' });
     }
-    res.json({ success: true });
+  });
+
+  // Public route for the script to report back (usually protected by secret key)
+  app.post('/api/automation/report', async (req, res) => {
+    const { message, level, status, isRunning, secret } = req.body;
+    const expectedSecret = process.env.API_SECRET_KEY || 'keyxxx';
+    if (secret !== expectedSecret) return res.status(401).json({ error: 'Unauthorized' });
+
+    if (message) {
+      const log = new AutomationLog({ message, level: level || 'info' });
+      await log.save();
+    }
+    
+    if (status) currentAutomationCommand = status;
+    if (typeof isRunning === 'boolean') automationIsRunning = isRunning;
+    
+    res.json({ command: currentAutomationCommand });
   });
 
   // --- Webhook Route (Email Receiver) ---
@@ -709,11 +729,15 @@ async function startServer() {
       } else {
         console.log(`[EMAIL WEBHOOK] Found existing EmailAlias for ${to} with status ${aliasDoc.status}`);
         
-        if (aliasDoc.isDeleted && aliasDoc.status !== 'admin') {
-          console.log(`[EMAIL WEBHOOK] Alias ${to} is deleted and not ADMIN. Incrementing deletedMessageCount and skipping email save.`);
-          aliasDoc.deletedMessageCount = (aliasDoc.deletedMessageCount || 0) + 1;
-          await aliasDoc.save();
-          return res.status(200).json({ success: true, message: 'Email skipped for deleted alias' });
+        if (aliasDoc.isDeleted) {
+          if (aliasDoc.status === 'admin') {
+            console.log(`[EMAIL WEBHOOK] Alias ${to} is deleted but status is ADMIN. Saving anyway.`);
+          } else {
+            console.log(`[EMAIL WEBHOOK] Alias ${to} is deleted. Incrementing deletedMessageCount and skipping email save.`);
+            aliasDoc.deletedMessageCount = (aliasDoc.deletedMessageCount || 0) + 1;
+            await aliasDoc.save();
+            return res.status(200).json({ success: true, message: 'Email skipped for deleted alias' });
+          }
         }
 
         // Map alias status to email status
@@ -744,45 +768,6 @@ async function startServer() {
     } catch (error) {
       console.error('[EMAIL WEBHOOK] Webhook error:', error);
       res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // --- Bot Download Route ---
-  app.get('/api/bot/download', (req, res) => {
-    res.sendFile(path.join(process.cwd(), 'bot.cjs'));
-  });
-
-  // --- Discord Notification Route ---
-  app.post('/api/bot/notify', authenticateToken, async (req, res) => {
-    const { message } = req.body;
-    const botToken = process.env.DISCORD_BOT_TOKEN;
-    const channelId = process.env.DISCORD_CHANNEL_ID;
-
-    if (!botToken || !channelId) {
-      console.warn('[DISCORD] Missing credentials in environment.');
-      return res.status(500).json({ error: 'Discord not configured on server' });
-    }
-
-    try {
-      const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bot ${botToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ content: message })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        console.error('[DISCORD] API Error:', JSON.stringify(errData));
-        return res.status(response.status).json({ error: 'Discord API error' });
-      }
-
-      res.json({ success: true });
-    } catch (err: any) {
-      console.error('[DISCORD] Fetch error:', err.message);
-      res.status(500).json({ error: 'Failed to send Discord notification' });
     }
   });
 
@@ -821,50 +806,7 @@ async function startServer() {
     });
   }
 
-  const httpServer = http.createServer(app);
-  const io = new Server(httpServer, {
-    cors: {
-      origin: "*",
-      methods: ["GET", "POST"]
-    }
-  });
-
-  const connectedDevices = new Map();
-
-  io.use((socket, next) => {
-    const apiSecret = process.env.API_SECRET_KEY || 'keyxxx';
-    const authKey = socket.handshake.auth.token || socket.handshake.query.token;
-    
-    if (authKey === apiSecret) {
-      return next();
-    }
-    
-    // Fallback if not secure bot
-    console.warn(`[SOCKET] Unauthorized connection attempt from ${socket.id}`);
-    next(new Error("Authentication failed"));
-  });
-
-  io.on('connection', (socket) => {
-    const deviceName = socket.handshake.query.deviceName || `Device-${socket.id.substring(0, 4)}`;
-    console.log(`Bot connected: ${deviceName} (${socket.id})`);
-    
-    connectedDevices.set(socket.id, { 
-      id: socket.id, 
-      name: deviceName,
-      status: 'online', 
-      lastSeen: new Date() 
-    });
-    
-    io.emit('devices_update', Array.from(connectedDevices.values()));
-
-    socket.on('disconnect', () => {
-      console.log(`Bot disconnected: ${socket.id}`);
-      connectedDevices.delete(socket.id);
-      io.emit('devices_update', Array.from(connectedDevices.values()));
-    });
-  });
-
-  httpServer.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }
