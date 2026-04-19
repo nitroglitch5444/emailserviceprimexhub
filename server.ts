@@ -583,12 +583,13 @@ async function startServer() {
   const commandHistory: any[] = [];
 
   app.post('/api/admin/automation/command', authenticateToken, isAdmin, (req, res) => {
-    const { command, timer } = req.body;
+    const { command, timer, password } = req.body;
     
     const entry = {
       id: Date.now().toString(),
       timestamp: new Date().toISOString(),
       command: command ? command.toUpperCase() : 'UNKNOWN',
+      password: password || '',
       timerMinutes: timer || 0,
       rawPayload: req.body
     };
@@ -600,6 +601,7 @@ async function startServer() {
     console.log('🤖 AUTOMATION COMMAND RECEIVED VIA API');
     console.log(`⏱️  Time: ${entry.timestamp}`);
     console.log(`👉 Command:  [ ${entry.command} ]`);
+    if (entry.password) console.log(`🔑 Password: [ ${entry.password} ]`);
     console.log(`⏳ Timer:    [ ${entry.timerMinutes} Minutes ]`);
     console.log(`📦 Payload: `, req.body);
     console.log('======================================================\n');

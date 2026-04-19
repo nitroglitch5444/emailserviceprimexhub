@@ -22,8 +22,8 @@ const AutomationPanel: React.FC = () => {
     ].slice(0, 15)); // Keep last 15 local logs
   };
 
-  const sendCommand = async (cmd: string) => {
-    setSendingCmd(cmd);
+  const sendCommand = async (cmd: string, pass?: string) => {
+    setSendingCmd(cmd + (pass ? ` ${pass}` : ''));
     addLog(`Clicked: ${cmd.toUpperCase()} button`, 'info');
     
     // Slight artificial delay for smooth UI feedback
@@ -40,6 +40,7 @@ const AutomationPanel: React.FC = () => {
         },
         body: JSON.stringify({ 
           command: cmd,
+          password: pass || '',
           timer: timer ? parseInt(timer) : 0
         })
       });
@@ -98,42 +99,42 @@ const AutomationPanel: React.FC = () => {
           </h3>
           
           <button 
-            onClick={() => sendCommand('start s')}
+            onClick={() => sendCommand('START A', 'user01@g')}
             disabled={sendingCmd !== null}
             className={`w-full group relative overflow-hidden px-6 py-4 rounded-xl text-md font-bold flex items-center justify-center gap-3 transition-all duration-300
-              ${sendingCmd === 'start s' ? 'bg-emerald-500 text-white scale-[0.98]' : 
+              ${sendingCmd === 'START A user01@g' ? 'bg-emerald-500 text-white scale-[0.98]' : 
                 sendingCmd !== null ? 'bg-emerald-500/10 text-emerald-500/30 border border-emerald-500/10 cursor-not-allowed' : 
                 'bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:border-emerald-500 hover:shadow-[0_0_25px_rgba(16,185,129,0.4)]'
               }`}
           >
-            <Play className={`w-5 h-5 ${sendingCmd === 'start s' ? 'animate-pulse' : 'group-hover:scale-110 transition-transform'}`} />
-            {sendingCmd === 'start s' ? 'Sending API Request...' : 'START (Pass: user01@g)'}
+            <Play className={`w-5 h-5 ${sendingCmd === 'START A user01@g' ? 'animate-pulse' : 'group-hover:scale-110 transition-transform'}`} />
+            {sendingCmd === 'START A user01@g' ? 'Sending API Request...' : 'START (Pass: user01@g)'}
           </button>
 
           <button 
-            onClick={() => sendCommand('start a')}
+            onClick={() => sendCommand('START S', 'gonabot@5414')}
             disabled={sendingCmd !== null}
             className={`w-full group relative overflow-hidden px-6 py-4 rounded-xl text-md font-bold flex items-center justify-center gap-3 transition-all duration-300
-              ${sendingCmd === 'start a' ? 'bg-blue-500 text-white scale-[0.98]' : 
+              ${sendingCmd === 'START S gonabot@5414' ? 'bg-blue-500 text-white scale-[0.98]' : 
                 sendingCmd !== null ? 'bg-blue-500/10 text-blue-500/30 border border-blue-500/10 cursor-not-allowed' : 
                 'bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400 hover:border-blue-500 hover:shadow-[0_0_25px_rgba(59,130,246,0.4)]'
               }`}
           >
-            <Play className={`w-5 h-5 ${sendingCmd === 'start a' ? 'animate-pulse' : 'group-hover:scale-110 transition-transform'}`} />
-            {sendingCmd === 'start a' ? 'Sending API Request...' : 'START (Pass: gonabot@)'}
+            <Play className={`w-5 h-5 ${sendingCmd === 'START S gonabot@5414' ? 'animate-pulse' : 'group-hover:scale-110 transition-transform'}`} />
+            {sendingCmd === 'START S gonabot@5414' ? 'Sending API Request...' : 'START (Pass: gonabot@5414)'}
           </button>
           
           <button 
-            onClick={() => sendCommand('stop')}
+            onClick={() => sendCommand('STOP')}
             disabled={sendingCmd !== null}
             className={`w-full group relative overflow-hidden px-6 py-4 rounded-xl text-md font-bold flex items-center justify-center gap-3 transition-all duration-300
-              ${sendingCmd === 'stop' ? 'bg-red-500 text-white scale-[0.98]' : 
+              ${sendingCmd === 'STOP' ? 'bg-red-500 text-white scale-[0.98]' : 
                 sendingCmd !== null ? 'bg-red-500/10 text-red-500/30 border border-red-500/10 cursor-not-allowed' : 
                 'bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:border-red-500 hover:shadow-[0_0_25px_rgba(239,68,68,0.4)]'
               }`}
           >
-            <Square className={`w-5 h-5 ${sendingCmd === 'stop' ? 'animate-pulse' : 'group-hover:scale-110 transition-transform'}`} />
-            {sendingCmd === 'stop' ? 'Sending Stop Order...' : 'STOP AUTOMATION'}
+            <Square className={`w-5 h-5 ${sendingCmd === 'STOP' ? 'animate-pulse' : 'group-hover:scale-110 transition-transform'}`} />
+            {sendingCmd === 'STOP' ? 'Sending Stop Order...' : 'STOP AUTOMATION'}
           </button>
         </div>
 
@@ -202,7 +203,8 @@ const AutomationPanel: React.FC = () => {
             <div className="bg-black/60 border border-premium-border rounded-lg p-3 text-xs font-mono text-gray-300 overflow-x-auto whitespace-pre">
 <span className="text-blue-400">POST</span> https://primexhub.shop/api/admin/automation/command{'\n'}
 <span className="text-gray-500">Body:</span> {'{\n'}
-  "command": <span className="text-green-400">"start a"</span>,
+  "command": <span className="text-green-400">"START A"</span>,
+  "password": <span className="text-green-400">"user01@g"</span>,
   "timer": <span className="text-orange-400">5</span>
 {'\n}'}
             </div>
