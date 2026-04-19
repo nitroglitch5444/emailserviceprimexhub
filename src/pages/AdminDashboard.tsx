@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuthStore } from '../store/auth';
 import { useAdminStore } from '../store/adminStore';
 import { useNavigate, Navigate } from 'react-router-dom';
-import { Settings, Package, ShoppingBag, Mail, ShieldAlert, Database, Cpu } from 'lucide-react';
+import { Settings, Package, ShoppingBag, Mail, ShieldAlert, Database, Cpu, Clock, CheckCircle } from 'lucide-react';
 import AutomationPanel from '../components/AutomationPanel';
 
 export default function AdminDashboard() {
@@ -167,6 +167,20 @@ export default function AdminDashboard() {
     } catch (err) {
       console.error(err);
       setEmails(previousEmails);
+    }
+  };
+
+  const handleToggleUsed = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin/aliases/${id}/toggle-used`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        fetchData();
+      }
+    } catch (err) {
+      console.error('Failed to toggle used status', err);
     }
   };
 
@@ -359,13 +373,21 @@ export default function AdminDashboard() {
                       <th className="p-3">Alias</th>
                       <th className="p-3">Status</th>
                       <th className="p-3">Assigned To</th>
+                      <th className="p-3">Usage Timer (24H)</th>
                       <th className="p-3">Created</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {aliases.map(a => (
+                    {aliases.map(a => {
+                      const isUsed = a.usedUntil && new Date(a.usedUntil).getTime() > Date.now();
+                      const timeLeft = isUsed ? Math.max(0, Math.ceil((new Date(a.usedUntil).getTime() - Date.now()) / (1000 * 60 * 60))) : 0;
+                      
+                      return (
                       <tr key={a._id} className="border-b border-premium-border hover:bg-white/5 transition-colors">
-                        <td className="p-3">{a.alias}</td>
+                        <td className="p-3">
+                          {a.alias}
+                          {isUsed && <span className="ml-2 inline-flex items-center gap-1 bg-red-500/20 text-red-400 text-[10px] px-1.5 py-0.5 rounded border border-red-500/30"><Clock className="w-3 h-3" /> Used</span>}
+                        </td>
                         <td className="p-3">
                           <span className={`text-xs font-bold px-2 py-1 rounded uppercase border ${
                             a.status === 'admin' ? 'bg-purple-500/20 text-purple-400 border-purple-500/30' :
@@ -377,9 +399,19 @@ export default function AdminDashboard() {
                           </span>
                         </td>
                         <td className="p-3">{a.assignedTo ? a.assignedTo.username : 'None'}</td>
+                        <td className="p-3">
+                          {a.status === 'admin' ? (
+                            <button 
+                              onClick={() => handleToggleUsed(a._id)}
+                              className={`text-xs font-bold px-2 py-1 rounded border transition-colors flex items-center gap-1 w-fit ${isUsed ? 'bg-orange-500/20 text-orange-400 border-orange-500/30 hover:bg-orange-500/30' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700 hover:text-white'}`}
+                            >
+                              {isUsed ? <><Clock className="w-3 h-3" /> Wait {timeLeft}h (Click to clear)</> : <><CheckCircle className="w-3 h-3" /> Ready (Click to mark 24h)</>}
+                            </button>
+                          ) : <span className="text-gray-600 text-xs">-</span>}
+                        </td>
                         <td className="p-3">{new Date(a.createdAt).toLocaleDateString()}</td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               </div>

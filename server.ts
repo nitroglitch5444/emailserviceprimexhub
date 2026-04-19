@@ -62,6 +62,7 @@ const emailAliasSchema = new mongoose.Schema({
   assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   isDeleted: { type: Boolean, default: false },
   deletedMessageCount: { type: Number, default: 0 },
+  usedUntil: { type: Date, default: null },
   createdAt: { type: Date, default: Date.now }
 });
 const EmailAlias = mongoose.model('EmailAlias', emailAliasSchema);
@@ -561,6 +562,27 @@ async function startServer() {
     }
   });
 
+  app.post('/api/admin/aliases/:id/toggle-used', authenticateToken, isAdmin, async (req, res) => {
+    try {
+      const alias = await EmailAlias.findById(req.params.id);
+      if (!alias) return res.status(404).json({ error: 'Alias not found' });
+      
+      const now = Date.now();
+      const isCurrentlyUsed = alias.usedUntil && new Date(alias.usedUntil).getTime() > now;
+      
+      if (isCurrentlyUsed) {
+        alias.usedUntil = null; // Unmark
+      } else {
+        alias.usedUntil = new Date(now + 24 * 60 * 60 * 1000); // Set 24h timer
+      }
+      
+      await alias.save();
+      res.json({ success: true, alias });
+    } catch (err) {
+      res.status(500).json({ error: 'Server error' });
+    }
+  });
+
   app.delete('/api/admin/emails/:id', authenticateToken, isAdmin, async (req, res) => {
     try {
       await Email.findByIdAndDelete(req.params.id);
@@ -579,42 +601,277 @@ async function startServer() {
     }
   });
 
-  // --- Automation Routes (API Logger & History) ---
-  const commandHistory: any[] = [];
+  // --- Automation Routes (API Logger & Job Manager) ---
+  const activeBots = new Map<string, { lastSeen: number }>();
+  
+  const jobManager = {
+    activeJob: null as any,
+    currentTask: null as any,
+    summary: null as any,
+    targetBots: [] as string[] // Selected bots for the job
+  };
 
-  app.post('/api/admin/automation/command', authenticateToken, isAdmin, (req, res) => {
-    const { command, timer, password } = req.body;
-    
-    const entry = {
-      id: Date.now().toString(),
-      timestamp: new Date().toISOString(),
-      command: command ? command.toUpperCase() : 'UNKNOWN',
-      password: password || '',
-      timerMinutes: timer || 0,
-      rawPayload: req.body
-    };
+  const getOnlineBots = () => {
+    const now = Date.now();
+    const online: string[] = [];
+    activeBots.forEach((data, botId) => {
+      if (now - data.lastSeen < 20000) { 
+        online.push(botId);
+      } else {
+        activeBots.delete(botId);
+      }
+    });
+    return online;
+  };
 
-    commandHistory.unshift(entry);
-    if (commandHistory.length > 50) commandHistory.pop(); // Keep last 50
-
-    console.log('\n======================================================');
-    console.log('🤖 AUTOMATION COMMAND RECEIVED VIA API');
-    console.log(`⏱️  Time: ${entry.timestamp}`);
-    console.log(`👉 Command:  [ ${entry.command} ]`);
-    if (entry.password) console.log(`🔑 Password: [ ${entry.password} ]`);
-    console.log(`⏳ Timer:    [ ${entry.timerMinutes} Minutes ]`);
-    console.log(`📦 Payload: `, req.body);
-    console.log('======================================================\n');
-    
-    res.json({ success: true, message: `Command '${command}' received.`, entry });
+  app.post('/api/bot/heartbeat', (req, res) => {
+    const { botId } = req.body;
+    if (botId) {
+      activeBots.set(botId, { lastSeen: Date.now() });
+    }
+    res.json({ success: true, onlineCount: getOnlineBots().length });
   });
 
-  // Public endpoint for the user to view API history from a browser link
-  app.get('/api/automation/history', (req, res) => {
+  app.post('/api/bot/task/reply', (req, res) => {
+    const { action, taskId } = req.body;
+    
+    // Check if the reply is -1 for the currently active task
+    if (action === '-1' && jobManager.currentTask && jobManager.currentTask.id === taskId) {
+      if (!jobManager.activeJob) {
+          jobManager.currentTask = null;
+          return res.json({ success: true, message: 'Job already ended.' });
+      }
+
+      jobManager.activeJob.completedCount++;
+      jobManager.currentTask = null; // Clear from history immediately
+      
+      const isTimeout = Date.now() > jobManager.activeJob.endTime;
+      const isTargetReached = jobManager.activeJob.completedCount >= jobManager.activeJob.targetCount;
+
+      console.log(`✅ [TASK COMPLETED] Task ${taskId} finished. Target: ${jobManager.activeJob.completedCount}/${jobManager.activeJob.targetCount}`);
+
+      if (isTimeout || isTargetReached) {
+        // Stop Job, print summary
+        const status = isTimeout ? 'TIMEOUT' : 'GOAL_REACHED';
+        const timeElapsed = ((Date.now() - jobManager.activeJob.startTime) / 60000).toFixed(1);
+        jobManager.summary = {
+          status,
+          target: jobManager.activeJob.targetCount,
+          completed: jobManager.activeJob.completedCount,
+          timeLeft: Math.max(0, jobManager.activeJob.targetCount - jobManager.activeJob.completedCount),
+          timeElapsed
+        };
+        jobManager.activeJob = null;
+        console.log(`🛑 [JOB ENDED] ${status} | Target: ${jobManager.summary.target} | Done: ${jobManager.summary.completed}`);
+      } else {
+        // Spawn Next +1
+        const nextTaskId = 'T' + Math.floor(1000 + Math.random() * 9000);
+        
+        // Pick a random target bot if multiple were selected or available
+        const randomTargetBot = jobManager.activeJob.targetBots && jobManager.activeJob.targetBots.length > 0 
+           ? jobManager.activeJob.targetBots[Math.floor(Math.random() * jobManager.activeJob.targetBots.length)]
+           : activeBots.keys().next().value; // Fallback to first available if none selected
+
+        if (jobManager.activeJob.type === 'upload') {
+           const idx = jobManager.activeJob.completedCount;
+           const nextTaskInfo = jobManager.activeJob.uploadTasks[idx];
+           jobManager.currentTask = {
+             id: nextTaskId,
+             command: '+1',
+             action: 'Upload',
+             targetBot: randomTargetBot,
+             ...nextTaskInfo
+           };
+        } else {
+           jobManager.currentTask = {
+             id: nextTaskId,
+             command: '+1',
+             action: 'Email',
+             targetBot: randomTargetBot,
+             password: jobManager.activeJob.password
+           };
+        }
+        
+        console.log(`🚀 [NEXT TASK ADDED] ${nextTaskId} added to history. TargetBot: ${randomTargetBot}`);
+      }
+      
+      return res.json({ success: true });
+    }
+    
+    res.json({ success: false, error: 'Task ID mismatch or invalid action' });
+  });
+
+  app.get('/api/admin/automation/status', authenticateToken, isAdmin, (req, res) => {
+    res.json({
+      onlineBots: getOnlineBots(),
+      activeJob: jobManager.activeJob,
+      currentTask: jobManager.currentTask,
+      summary: jobManager.summary
+    });
+  });
+
+  // START JOB
+  app.post('/api/admin/automation/job/start', authenticateToken, isAdmin, async (req, res) => {
+    const { password, timer, targetCount, type = 'email', uploadTasks = [], targetBots = [] } = req.body;
+    
+    // Fallback if targetBots is empty: use all currently online bots
+    let botsToUse = targetBots;
+    if (!botsToUse || botsToUse.length === 0) {
+       botsToUse = getOnlineBots();
+    }
+
+    const mins = parseInt(timer);
+    const count = parseInt(targetCount);
+
+    if (jobManager.activeJob) {
+      return res.status(400).json({ error: 'A job is already running' });
+    }
+
+    let jobTasks: any[] = [];
+
+    if (type === 'upload') {
+      // For upload jobs, fetch admin aliases that are NOT on cooldown
+      const now = Date.now();
+      let adminAliases = await EmailAlias.find({ 
+        status: 'admin', 
+        $or: [{ usedUntil: null }, { usedUntil: { $lte: new Date(now) } }] 
+      });
+
+      if (adminAliases.length === 0) {
+        return res.status(400).json({ error: 'No available aged admin accounts found. All might be on 24h cooldown.' });
+      }
+
+      if (uploadTasks.length > adminAliases.length) {
+        return res.status(400).json({ error: `Not enough available aged accounts. Required: ${uploadTasks.length}, Available: ${adminAliases.length}` });
+      }
+
+      // Shuffle available aliases
+      adminAliases = adminAliases.sort(() => 0.5 - Math.random());
+
+      jobTasks = [];
+      for (let i = 0; i < uploadTasks.length; i++) {
+        const assignedAlias = adminAliases[i];
+        jobTasks.push({
+          ...uploadTasks[i],
+          email: assignedAlias.alias,
+          password
+        });
+        
+        // Lock this alias for 24 hours immediately
+        assignedAlias.usedUntil = new Date(now + 24 * 60 * 60 * 1000);
+        await assignedAlias.save();
+      }
+
+      if (jobTasks.length === 0) {
+        return res.status(400).json({ error: 'No valid tasks provided for upload job.' });
+      }
+    }
+
+    const actualTargetCount = type === 'upload' ? jobTasks.length : count;
+
+    jobManager.activeJob = {
+      id: 'J' + Math.floor(1000 + Math.random() * 9000),
+      type, // 'email' or 'upload'
+      password,
+      targetCount: actualTargetCount,
+      completedCount: 0,
+      endTime: Date.now() + (mins * 60000),
+      startTime: Date.now(),
+      uploadTasks: jobTasks,
+      targetBots: botsToUse
+    };
+    
+    jobManager.summary = null;
+
+    // Dispatch first task
+    const taskId = 'T' + Math.floor(1000 + Math.random() * 9000);
+    const firstTargetBot = botsToUse[Math.floor(Math.random() * botsToUse.length)];
+    
+    if (type === 'upload') {
+      const firstTaskInfo = jobManager.activeJob.uploadTasks[0];
+      jobManager.currentTask = {
+        id: taskId,
+        command: '+1',
+        action: 'Upload',
+        targetBot: firstTargetBot,
+        ...firstTaskInfo
+      };
+    } else {
+      jobManager.currentTask = {
+        id: taskId,
+        command: '+1',
+        action: 'Email',
+        targetBot: firstTargetBot,
+        password
+      };
+    }
+
+    console.log(`\n======================================================`);
+    console.log(`🟢 [JOB STARTED] ID: ${jobManager.activeJob.id} | Type: ${type} | Bots: ${botsToUse.join(', ')}`);
+    console.log(`🎯 Target: ${actualTargetCount} | ⏳ Timer: ${mins} Mins`);
+    console.log(`======================================================\n`);
+    
+    res.json({ success: true, job: jobManager.activeJob });
+  });
+
+  // VERIFY GAME ID
+  app.get('/api/admin/verify-game/:id', authenticateToken, isAdmin, async (req, res) => {
+    try {
+      // Validate game ID by checking Roblox universe/place endpoint
+      // Using an open Roblox API: checking thumbnail gives 200 vs 400 for invalid
+      const roboxRes = await fetch(`https://thumbnails.roblox.com/v1/places/gameicons?placeIds=${req.params.id}&size=50x50&format=Png&isCircular=false`);
+      if (roboxRes.ok) {
+        const data = await roboxRes.json();
+        if (data && data.data && data.data.length > 0 && data.data[0].state === 'Completed') {
+          return res.json({ success: true, valid: true });
+        }
+      }
+      res.json({ success: true, valid: false });
+    } catch {
+      res.json({ success: true, valid: false }); // Fallback to invalid if API blocks
+    }
+  });
+
+  // STOP JOB
+  app.post('/api/admin/automation/job/stop', authenticateToken, isAdmin, (req, res) => {
+    if (jobManager.activeJob) {
+      const timeElapsed = ((Date.now() - jobManager.activeJob.startTime) / 60000).toFixed(1);
+      jobManager.summary = {
+        status: 'MANUAL_STOP',
+        target: jobManager.activeJob.targetCount,
+        completed: jobManager.activeJob.completedCount,
+        timeLeft: Math.max(0, jobManager.activeJob.targetCount - jobManager.activeJob.completedCount),
+        timeElapsed
+      };
+      console.log(`🛑 [JOB STOPPED] Done: ${jobManager.summary.completed}/${jobManager.summary.target}`);
+      jobManager.activeJob = null;
+      jobManager.currentTask = null;
+    }
+    res.json({ success: true });
+  });
+
+  // Public endpoint for the user to view API history
+  app.get('/api/automation/history/:botId?', (req, res) => {
+    // Determine the bot requesting the history (optional params, but recommended)
+    const requestingBot = req.params.botId || req.query.botId;
+
+    // Filter the task if it's targeted for a specific bot and this request specified its bot ID.
+    // If no targetBot is specified in currentTask (legacy), anyone can take it.
+    let taskForBot = null;
+    if (jobManager.currentTask) {
+        if (!jobManager.currentTask.targetBot) {
+            taskForBot = jobManager.currentTask; // Anyone can take it
+        } else if (jobManager.currentTask.targetBot === requestingBot) {
+            taskForBot = jobManager.currentTask; // Matched bot
+        } else if (!requestingBot) {
+            taskForBot = jobManager.currentTask; // Viewer mode (panel)
+        }
+    }
+
     res.json({
       status: 'active',
-      totalLogs: commandHistory.length,
-      history: commandHistory
+      isJobActive: !!jobManager.activeJob,
+      history: taskForBot ? [taskForBot] : []
     });
   });
 

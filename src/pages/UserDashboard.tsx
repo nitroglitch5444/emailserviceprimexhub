@@ -823,22 +823,30 @@ export default function UserDashboard() {
                                   </span>
                                 )}
                               </div>
-                              <div className="flex flex-wrap items-center gap-2 md:gap-3 text-[10px] md:text-sm">
-                                <span className={cn(
-                                  "px-2 py-0.5 rounded-full font-bold border",
-                                  alias.status === 'unassigned' ? "bg-gray-500/20 text-gray-400 border-gray-500/30" :
-                                  alias.status === 'admin' ? "bg-purple-500/20 text-purple-400 border-purple-500/30" :
-                                  alias.status === 'stocking' ? "bg-blue-500/20 text-blue-400 border-blue-500/30" :
-                                  "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                                )}>
-                                  {alias.status.toUpperCase()}
-                                </span>
-                                {alias.assignedTo && (
-                                  <span className="text-gray-400 truncate max-w-[150px] md:max-w-none">
-                                    Assigned to: <span className="text-white font-medium">{users.find(u => u._id === alias.assignedTo)?.email || 'Unknown User'}</span>
+                              {user?.isAdmin && (
+                                <div className="flex flex-wrap items-center gap-2 md:gap-3 text-[10px] md:text-sm mt-1">
+                                  <span className={cn(
+                                    "px-2 py-0.5 rounded-full font-bold border",
+                                    alias.status === 'unassigned' ? "bg-gray-500/20 text-gray-400 border-gray-500/30" :
+                                    alias.status === 'admin' ? "bg-purple-500/20 text-purple-400 border-purple-500/30" :
+                                    alias.status === 'stocking' ? "bg-blue-500/20 text-blue-400 border-blue-500/30" :
+                                    "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                                  )}>
+                                    {alias.status.toUpperCase()}
                                   </span>
-                                )}
-                              </div>
+                                  {alias.assignedTo && (
+                                    <span className="text-gray-400 truncate max-w-[150px] md:max-w-none">
+                                      Assigned to: <span className="text-white font-medium">{users.find(u => u._id === alias.assignedTo)?.email || 'Unknown User'}</span>
+                                    </span>
+                                  )}
+                                  {/* Used Timer Tag for Admin */}
+                                  {(alias as any).usedUntil && new Date((alias as any).usedUntil).getTime() > Date.now() && (
+                                    <span className="shrink-0 px-2 py-0.5 rounded-full text-[10px] md:text-xs font-bold bg-orange-500/20 text-orange-400 border border-orange-500/30 flex items-center gap-1">
+                                      USED: {Math.max(0, Math.ceil((new Date((alias as any).usedUntil).getTime() - Date.now()) / (1000 * 60 * 60)))}h left
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                             
                             <div className="flex items-center gap-4 w-full sm:w-auto">
