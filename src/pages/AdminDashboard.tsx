@@ -378,7 +378,7 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {aliases.map(a => {
+                    {aliases.filter(a => a.status !== 'assigned').map(a => {
                       const isUsed = a.usedUntil && new Date(a.usedUntil).getTime() > Date.now();
                       const timeLeft = isUsed ? Math.max(0, Math.ceil((new Date(a.usedUntil).getTime() - Date.now()) / (1000 * 60 * 60))) : 0;
                       

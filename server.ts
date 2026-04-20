@@ -426,7 +426,8 @@ async function startServer() {
   app.post('/api/admin/emails/:id/assign', authenticateToken, isAdmin, async (req, res) => {
     try {
       const { userId } = req.body;
-      const email = await Email.findByIdAndUpdate(req.params.id, { assignedTo: userId }, { new: true });
+      const newEmailStatus = userId ? 'sold' : 'unassigned';
+      const email = await Email.findByIdAndUpdate(req.params.id, { assignedTo: userId || null, status: newEmailStatus }, { new: true });
       res.json(email);
     } catch (err) {
       res.status(500).json({ error: 'Server error' });
@@ -437,16 +438,19 @@ async function startServer() {
     try {
       const { recipientAlias, userId } = req.body;
       
+      const newAliasStatus = userId ? 'assigned' : 'unassigned';
+      const newEmailStatus = userId ? 'sold' : 'unassigned';
+
       // Update all emails with this recipient alias
       await Email.updateMany(
         { recipientAlias },
-        { $set: { assignedTo: userId || null } }
+        { $set: { assignedTo: userId || null, status: newEmailStatus } }
       );
       
       // Also update the EmailAlias document
       await EmailAlias.findOneAndUpdate(
         { alias: recipientAlias },
-        { $set: { assignedTo: userId || null } }
+        { $set: { assignedTo: userId || null, status: newAliasStatus } }
       );
       
       res.json({ success: true });
@@ -605,10 +609,12 @@ async function startServer() {
   const activeBots = new Map<string, { lastSeen: number }>();
   
   const jobManager = {
-    activeJob: null as any,
-    currentTask: null as any,
-    summary: null as any,
-    targetBots: [] as string[] // Selected bots for the job
+    activeJobs: new Map<string, any>(),
+    currentTasks: new Map<string, any>(),
+    summaries: new Map<string, any>(),
+    globalJob: null as any,
+    globalTask: null as any,
+    globalSummary: null as any
   };
 
   const getOnlineBots = () => {
@@ -635,78 +641,148 @@ async function startServer() {
   app.post('/api/bot/task/reply', (req, res) => {
     const { action, taskId } = req.body;
     
-    // Check if the reply is -1 for the currently active task
-    if (action === '-1' && jobManager.currentTask && jobManager.currentTask.id === taskId) {
-      if (!jobManager.activeJob) {
-          jobManager.currentTask = null;
-          return res.json({ success: true, message: 'Job already ended.' });
+    // 1. Check Global Upload Job
+    if (action === '-1' && jobManager.globalTask && jobManager.globalTask.id === taskId) {
+      if (!jobManager.globalJob) {
+          jobManager.globalTask = null;
+          return res.json({ success: true, message: 'Global job already ended.' });
       }
 
-      jobManager.activeJob.completedCount++;
-      jobManager.currentTask = null; // Clear from history immediately
+      jobManager.globalJob.completedCount++;
+      jobManager.globalTask = null; // Clear from history immediately
       
-      const isTimeout = Date.now() > jobManager.activeJob.endTime;
-      const isTargetReached = jobManager.activeJob.completedCount >= jobManager.activeJob.targetCount;
+      const isTimeout = Date.now() > jobManager.globalJob.endTime;
+      const isTargetReached = jobManager.globalJob.completedCount >= jobManager.globalJob.targetCount;
 
-      console.log(`✅ [TASK COMPLETED] Task ${taskId} finished. Target: ${jobManager.activeJob.completedCount}/${jobManager.activeJob.targetCount}`);
+      console.log(`✅ [GLOBAL TASK COMPLETED] Task ${taskId} finished. Target: ${jobManager.globalJob.completedCount}/${jobManager.globalJob.targetCount}`);
 
       if (isTimeout || isTargetReached) {
         // Stop Job, print summary
         const status = isTimeout ? 'TIMEOUT' : 'GOAL_REACHED';
-        const timeElapsed = ((Date.now() - jobManager.activeJob.startTime) / 60000).toFixed(1);
-        jobManager.summary = {
+        const timeElapsed = ((Date.now() - jobManager.globalJob.startTime) / 60000).toFixed(1);
+        jobManager.globalSummary = {
           status,
-          target: jobManager.activeJob.targetCount,
-          completed: jobManager.activeJob.completedCount,
-          timeLeft: Math.max(0, jobManager.activeJob.targetCount - jobManager.activeJob.completedCount),
+          target: jobManager.globalJob.targetCount,
+          completed: jobManager.globalJob.completedCount,
+          timeLeft: Math.max(0, jobManager.globalJob.targetCount - jobManager.globalJob.completedCount),
           timeElapsed
         };
-        jobManager.activeJob = null;
-        console.log(`🛑 [JOB ENDED] ${status} | Target: ${jobManager.summary.target} | Done: ${jobManager.summary.completed}`);
+        jobManager.globalJob = null;
+        console.log(`🛑 [GLOBAL JOB ENDED] ${status} | Target: ${jobManager.globalSummary.target} | Done: ${jobManager.globalSummary.completed}`);
       } else {
-        // Spawn Next +1
+        // Spawn Next
         const nextTaskId = 'T' + Math.floor(1000 + Math.random() * 9000);
+        // Random available bot
+        const onlineArr = Array.from(activeBots.keys());
+        const randomTargetBot = onlineArr.length > 0 ? onlineArr[Math.floor(Math.random() * onlineArr.length)] : null;
         
-        // Pick a random target bot if multiple were selected or available
-        const randomTargetBot = jobManager.activeJob.targetBots && jobManager.activeJob.targetBots.length > 0 
-           ? jobManager.activeJob.targetBots[Math.floor(Math.random() * jobManager.activeJob.targetBots.length)]
-           : activeBots.keys().next().value; // Fallback to first available if none selected
+        const idx = jobManager.globalJob.completedCount;
+        const nextTaskInfo = jobManager.globalJob.uploadTasks[idx];
+        jobManager.globalTask = {
+          id: nextTaskId,
+          command: '+1',
+          action: 'Upload',
+          targetBot: randomTargetBot,
+          ...nextTaskInfo
+        };
+        
+        console.log(`🚀 [GLOBAL NEXT TASK ADDED] ${nextTaskId}. TargetBot: ${randomTargetBot}`);
+      }
+      return res.json({ success: true });
+    }
 
-        if (jobManager.activeJob.type === 'upload') {
-           const idx = jobManager.activeJob.completedCount;
-           const nextTaskInfo = jobManager.activeJob.uploadTasks[idx];
-           jobManager.currentTask = {
-             id: nextTaskId,
-             command: '+1',
-             action: 'Upload',
-             targetBot: randomTargetBot,
-             ...nextTaskInfo
-           };
+    // 2. Check Individual Bot Jobs
+    for (let [botId, task] of jobManager.currentTasks.entries()) {
+      if (action === '-1' && task && task.id === taskId) {
+        const job = jobManager.activeJobs.get(botId);
+        if (!job) {
+          jobManager.currentTasks.delete(botId);
+          return res.json({ success: true, message: 'Bot Job already ended.' });
+        }
+
+        job.completedCount++;
+        jobManager.currentTasks.delete(botId);
+        
+        const isTimeout = Date.now() > job.endTime;
+        const isTargetReached = job.completedCount >= job.targetCount;
+
+        console.log(`✅ [TASK COMPLETED] Bot ${botId} - Task ${taskId} finished. Target: ${job.completedCount}/${job.targetCount}`);
+
+        if (isTimeout || isTargetReached) {
+          const status = isTimeout ? 'TIMEOUT' : 'GOAL_REACHED';
+          const timeElapsed = ((Date.now() - job.startTime) / 60000).toFixed(1);
+          jobManager.summaries.set(botId, {
+            status,
+            target: job.targetCount,
+            completed: job.completedCount,
+            timeLeft: Math.max(0, job.targetCount - job.completedCount),
+            timeElapsed
+          });
+          jobManager.activeJobs.delete(botId);
+          console.log(`🛑 [BOT JOB ENDED] ${botId} - ${status} | Target: ${jobManager.summaries.get(botId).target}`);
         } else {
-           jobManager.currentTask = {
-             id: nextTaskId,
-             command: '+1',
-             action: 'Email',
-             targetBot: randomTargetBot,
-             password: jobManager.activeJob.password
-           };
+          // Spawn Next
+          const nextTaskId = 'T' + Math.floor(1000 + Math.random() * 9000);
+          jobManager.currentTasks.set(botId, {
+            id: nextTaskId,
+            command: '+1',
+            action: 'Email',
+            targetBot: botId,
+            password: job.password
+          });
+          console.log(`🚀 [NEXT TASK ADDED] Bot ${botId} - Task ${nextTaskId}`);
         }
         
-        console.log(`🚀 [NEXT TASK ADDED] ${nextTaskId} added to history. TargetBot: ${randomTargetBot}`);
+        return res.json({ success: true });
       }
-      
-      return res.json({ success: true });
     }
     
     res.json({ success: false, error: 'Task ID mismatch or invalid action' });
   });
 
   app.get('/api/admin/automation/status', authenticateToken, isAdmin, (req, res) => {
+    // Generate an array of all jobs to render
+    const allJobs: any[] = [];
+    
+    if (jobManager.globalJob || jobManager.globalSummary) {
+      allJobs.push({
+        botId: 'GLOBAL_UPLOAD',
+        job: jobManager.globalJob,
+        task: jobManager.globalTask,
+        summary: jobManager.globalSummary
+      });
+    }
+
+    // Add active jobs
+    for (let [botId, job] of jobManager.activeJobs.entries()) {
+      allJobs.push({
+        botId,
+        job: job,
+        task: jobManager.currentTasks.get(botId),
+        summary: jobManager.summaries.get(botId) || null
+      });
+    }
+
+    // Add summaries for bots that are no longer active
+    for (let [botId, summary] of jobManager.summaries.entries()) {
+       if (!jobManager.activeJobs.has(botId)) {
+          allJobs.push({
+             botId,
+             job: null,
+             task: null,
+             summary: summary
+          });
+       }
+    }
+
     res.json({
       onlineBots: getOnlineBots(),
-      activeJob: jobManager.activeJob,
-      currentTask: jobManager.currentTask,
-      summary: jobManager.summary
+      jobs: allJobs,
+      
+      // Keep legacy fields so frontend doesn't crash during transition (optional, but defensive)
+      activeJob: null,
+      currentTask: null, 
+      summary: null
     });
   });
 
@@ -719,17 +795,20 @@ async function startServer() {
     if (!botsToUse || botsToUse.length === 0) {
        botsToUse = getOnlineBots();
     }
+    
+    if (botsToUse.length === 0) {
+       return res.status(400).json({ error: 'No bots are currently online or selected.' });
+    }
 
     const mins = parseInt(timer);
     const count = parseInt(targetCount);
-
-    if (jobManager.activeJob) {
-      return res.status(400).json({ error: 'A job is already running' });
-    }
-
-    let jobTasks: any[] = [];
+    let successBots = [];
 
     if (type === 'upload') {
+      if (jobManager.globalJob) {
+        return res.status(400).json({ error: 'A global upload job is already running' });
+      }
+
       // For upload jobs, fetch admin aliases that are NOT on cooldown
       const now = Date.now();
       let adminAliases = await EmailAlias.find({ 
@@ -748,7 +827,7 @@ async function startServer() {
       // Shuffle available aliases
       adminAliases = adminAliases.sort(() => 0.5 - Math.random());
 
-      jobTasks = [];
+      let jobTasks = [];
       for (let i = 0; i < uploadTasks.length; i++) {
         const assignedAlias = adminAliases[i];
         jobTasks.push({
@@ -765,53 +844,82 @@ async function startServer() {
       if (jobTasks.length === 0) {
         return res.status(400).json({ error: 'No valid tasks provided for upload job.' });
       }
-    }
 
-    const actualTargetCount = type === 'upload' ? jobTasks.length : count;
+      jobManager.globalJob = {
+        id: 'J' + Math.floor(1000 + Math.random() * 9000),
+        type: 'upload',
+        password,
+        targetCount: jobTasks.length,
+        completedCount: 0,
+        endTime: Date.now() + (mins * 60000),
+        startTime: Date.now(),
+        uploadTasks: jobTasks
+      };
+      
+      jobManager.globalSummary = null;
 
-    jobManager.activeJob = {
-      id: 'J' + Math.floor(1000 + Math.random() * 9000),
-      type, // 'email' or 'upload'
-      password,
-      targetCount: actualTargetCount,
-      completedCount: 0,
-      endTime: Date.now() + (mins * 60000),
-      startTime: Date.now(),
-      uploadTasks: jobTasks,
-      targetBots: botsToUse
-    };
-    
-    jobManager.summary = null;
-
-    // Dispatch first task
-    const taskId = 'T' + Math.floor(1000 + Math.random() * 9000);
-    const firstTargetBot = botsToUse[Math.floor(Math.random() * botsToUse.length)];
-    
-    if (type === 'upload') {
-      const firstTaskInfo = jobManager.activeJob.uploadTasks[0];
-      jobManager.currentTask = {
+      // Dispatch first global task
+      const taskId = 'T' + Math.floor(1000 + Math.random() * 9000);
+      const firstTargetBot = botsToUse[Math.floor(Math.random() * botsToUse.length)];
+      
+      jobManager.globalTask = {
         id: taskId,
         command: '+1',
         action: 'Upload',
         targetBot: firstTargetBot,
-        ...firstTaskInfo
+        ...jobTasks[0]
       };
-    } else {
-      jobManager.currentTask = {
-        id: taskId,
-        command: '+1',
-        action: 'Email',
-        targetBot: firstTargetBot,
-        password
-      };
-    }
 
-    console.log(`\n======================================================`);
-    console.log(`🟢 [JOB STARTED] ID: ${jobManager.activeJob.id} | Type: ${type} | Bots: ${botsToUse.join(', ')}`);
-    console.log(`🎯 Target: ${actualTargetCount} | ⏳ Timer: ${mins} Mins`);
-    console.log(`======================================================\n`);
-    
-    res.json({ success: true, job: jobManager.activeJob });
+      console.log(`\n======================================================`);
+      console.log(`🟢 [GLOBAL UPLOAD STARTED] ID: ${jobManager.globalJob.id} | Bots Pool: ${botsToUse.join(', ')}`);
+      console.log(`🎯 Target: ${jobTasks.length} | ⏳ Timer: ${mins} Mins`);
+      console.log(`======================================================\n`);
+      
+      return res.json({ success: true });
+
+    } else {
+      // Email Job per Bot
+      for (const botId of botsToUse) {
+        if (jobManager.activeJobs.has(botId)) {
+          console.warn(`[START] Bot ${botId} is already running a job, skipping new start command for this bot.`);
+          continue;
+        }
+
+        const jobId = 'J' + Math.floor(1000 + Math.random() * 9000);
+        const taskId = 'T' + Math.floor(1000 + Math.random() * 9000);
+
+        jobManager.activeJobs.set(botId, {
+          id: jobId,
+          type: 'email',
+          password,
+          targetCount: count,
+          completedCount: 0,
+          endTime: Date.now() + (mins * 60000),
+          startTime: Date.now(),
+          targetBot: botId
+        });
+
+        jobManager.summaries.delete(botId);
+
+        jobManager.currentTasks.set(botId, {
+          id: taskId,
+          command: '+1',
+          action: 'Email',
+          targetBot: botId,
+          password
+        });
+        
+        successBots.push(botId);
+        
+        console.log(`🟢 [BOT JOB STARTED] Bot: ${botId} | ID: ${jobId} | Target: ${count}`);
+      }
+
+      if (successBots.length === 0) {
+        return res.status(400).json({ error: 'All selected bots are already running a job.' });
+      }
+
+      res.json({ success: true, message: `Started on ${successBots.length} bots.` });
+    }
   });
 
   // VERIFY GAME ID
@@ -834,43 +942,101 @@ async function startServer() {
 
   // STOP JOB
   app.post('/api/admin/automation/job/stop', authenticateToken, isAdmin, (req, res) => {
-    if (jobManager.activeJob) {
-      const timeElapsed = ((Date.now() - jobManager.activeJob.startTime) / 60000).toFixed(1);
-      jobManager.summary = {
-        status: 'MANUAL_STOP',
-        target: jobManager.activeJob.targetCount,
-        completed: jobManager.activeJob.completedCount,
-        timeLeft: Math.max(0, jobManager.activeJob.targetCount - jobManager.activeJob.completedCount),
-        timeElapsed
-      };
-      console.log(`🛑 [JOB STOPPED] Done: ${jobManager.summary.completed}/${jobManager.summary.target}`);
-      jobManager.activeJob = null;
-      jobManager.currentTask = null;
+    const { botId } = req.body;
+    
+    if (botId === 'GLOBAL_UPLOAD') {
+      if (jobManager.globalJob) {
+        const timeElapsed = ((Date.now() - jobManager.globalJob.startTime) / 60000).toFixed(1);
+        jobManager.globalSummary = {
+          status: 'MANUAL_STOP',
+          target: jobManager.globalJob.targetCount,
+          completed: jobManager.globalJob.completedCount,
+          timeLeft: Math.max(0, jobManager.globalJob.targetCount - jobManager.globalJob.completedCount),
+          timeElapsed
+        };
+        console.log(`🛑 [GLOBAL UPLOAD STOPPED] Done: ${jobManager.globalSummary.completed}/${jobManager.globalSummary.target}`);
+        jobManager.globalJob = null;
+        jobManager.globalTask = null;
+      }
+    } else if (botId) {
+      if (jobManager.activeJobs.has(botId)) {
+        const job = jobManager.activeJobs.get(botId);
+        const timeElapsed = ((Date.now() - job.startTime) / 60000).toFixed(1);
+        jobManager.summaries.set(botId, {
+          status: 'MANUAL_STOP',
+          target: job.targetCount,
+          completed: job.completedCount,
+          timeLeft: Math.max(0, job.targetCount - job.completedCount),
+          timeElapsed
+        });
+        console.log(`🛑 [BOT JOB STOPPED] ${botId} Done: ${job.completedCount}/${job.targetCount}`);
+        jobManager.activeJobs.delete(botId);
+        jobManager.currentTasks.delete(botId);
+      }
+    } else {
+      // If no botId specific, fallback to stopping everything (legacy format stop)
+      if (jobManager.globalJob) {
+        const timeElapsed = ((Date.now() - jobManager.globalJob.startTime) / 60000).toFixed(1);
+        jobManager.globalSummary = {
+          status: 'MANUAL_STOP',
+          target: jobManager.globalJob.targetCount,
+          completed: jobManager.globalJob.completedCount,
+          timeLeft: Math.max(0, jobManager.globalJob.targetCount - jobManager.globalJob.completedCount),
+          timeElapsed
+        };
+        jobManager.globalJob = null;
+        jobManager.globalTask = null;
+      }
+      for (const [key, job] of jobManager.activeJobs.entries()) {
+        const timeElapsed = ((Date.now() - job.startTime) / 60000).toFixed(1);
+        jobManager.summaries.set(key, {
+          status: 'MANUAL_STOP',
+          target: job.targetCount,
+          completed: job.completedCount,
+          timeLeft: Math.max(0, job.targetCount - job.completedCount),
+          timeElapsed
+        });
+        jobManager.activeJobs.delete(key);
+        jobManager.currentTasks.delete(key);
+      }
     }
+
     res.json({ success: true });
   });
 
   // Public endpoint for the user to view API history
   app.get('/api/automation/history/:botId?', (req, res) => {
     // Determine the bot requesting the history (optional params, but recommended)
-    const requestingBot = req.params.botId || req.query.botId;
+    const requestingBot = (req.params.botId || req.query.botId) as string;
 
-    // Filter the task if it's targeted for a specific bot and this request specified its bot ID.
-    // If no targetBot is specified in currentTask (legacy), anyone can take it.
     let taskForBot = null;
-    if (jobManager.currentTask) {
-        if (!jobManager.currentTask.targetBot) {
-            taskForBot = jobManager.currentTask; // Anyone can take it
-        } else if (jobManager.currentTask.targetBot === requestingBot) {
-            taskForBot = jobManager.currentTask; // Matched bot
+    let isJobActive = false;
+
+    // 1. Is there a global task assigned to this bot?
+    if (jobManager.globalTask) {
+        if (!jobManager.globalTask.targetBot || jobManager.globalTask.targetBot === requestingBot) {
+             taskForBot = jobManager.globalTask;
         } else if (!requestingBot) {
-            taskForBot = jobManager.currentTask; // Viewer mode (panel)
+             taskForBot = jobManager.globalTask; // For generic panel view
+        }
+        isJobActive = !!jobManager.globalJob;
+    }
+
+    // 2. Is there a specific email task? (This can override generic panel view, or take precedence if explicitly targetted)
+    if (!taskForBot && requestingBot && jobManager.currentTasks.has(requestingBot)) {
+        taskForBot = jobManager.currentTasks.get(requestingBot);
+        isJobActive = true;
+    } else if (!taskForBot && !requestingBot) {
+        // Return ANY email task for the panel view if no global task was found
+        if (jobManager.currentTasks.size > 0) {
+           taskForBot = Array.from(jobManager.currentTasks.values())[0];
+           isJobActive = true;
         }
     }
 
     res.json({
       status: 'active',
-      isJobActive: !!jobManager.activeJob,
+      isJobActive,
       history: taskForBot ? [taskForBot] : []
     });
   });

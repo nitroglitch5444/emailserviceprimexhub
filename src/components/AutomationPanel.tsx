@@ -36,15 +36,17 @@ const AutomationPanel: React.FC = () => {
   const [logs, setLogs] = useState<LocalLog[]>([]);
   const [onlineBots, setOnlineBots] = useState<string[]>([]);
   const [selectedBots, setSelectedBots] = useState<string[]>([]);
-  const [activeJob, setActiveJob] = useState<any>(null);
-  const [jobSummary, setJobSummary] = useState<any>(null);
+  const [jobsStore, setJobsStore] = useState<any[]>([]);
   const [UIState, setUIState] = useState<'idle' | 'starting' | 'stopping'>('idle');
 
   const { token } = useAuthStore();
 
+  // Helper to check if ANY job is actively running (UI locks)
+  const isAnyJobActive = jobsStore.some(j => j.job !== null);
+
   const addLog = (message: string, status: 'info' | 'success' | 'error' | 'warning' = 'info') => {
     setLogs(prev => [
-      { id: Date.now(), time: new Date().toLocaleTimeString(), message, status },
+      { id: Date.now() + Math.random(), time: new Date().toLocaleTimeString(), message, status },
       ...prev
     ].slice(0, 30));
   };
@@ -60,17 +62,19 @@ const AutomationPanel: React.FC = () => {
           const data = await res.json();
           setOnlineBots(data.onlineBots || []);
           
-          if (data.activeJob && (!activeJob || data.activeJob.completedCount !== activeJob.completedCount)) {
-             setActiveJob(data.activeJob);
-          } else if (!data.activeJob && activeJob) {
-             setActiveJob(null);
-          }
-
-          if (data.summary && (!jobSummary || data.summary.status !== jobSummary.status)) {
-             setJobSummary(data.summary);
-             if (data.summary.status !== 'MANUAL_STOP') {
-                addLog(`⚙️ JOB FINISHED! Target: ${data.summary.target}, Done: ${data.summary.completed}`, 'success');
-             }
+          if (data.jobs) {
+             setJobsStore(prev => {
+                // Log newly completed summaries that weren't in prev
+                data.jobs.forEach((newJobEntry: any) => {
+                   if (newJobEntry.summary && newJobEntry.summary.status !== 'MANUAL_STOP') {
+                      const oldEntry = prev.find(p => p.botId === newJobEntry.botId);
+                      if (!oldEntry || !oldEntry.summary) {
+                          addLog(`⚙️ JOB FINISHED [${newJobEntry.botId}]! Target: ${newJobEntry.summary.target}, Done: ${newJobEntry.summary.completed}`, 'success');
+                      }
+                   }
+                });
+                return data.jobs;
+             });
           }
         }
       } catch (e) {
@@ -80,7 +84,7 @@ const AutomationPanel: React.FC = () => {
     };
     fetchStatus();
     return () => clearTimeout(timeout);
-  }, [token, activeJob, jobSummary]);
+  }, [token]);
 
   const verifyGameId = async () => {
     if (!gameId.trim()) return;
@@ -184,7 +188,6 @@ const AutomationPanel: React.FC = () => {
     }
     
     setUIState('starting');
-    setJobSummary(null);
     addLog(`Initiating ${activeTab} Job...`, 'info');
     
     try {
@@ -204,8 +207,7 @@ const AutomationPanel: React.FC = () => {
       const data = await res.json();
       
       if (res.ok) {
-        addLog(`✅ SUCCESS: Job ${data.job.id} initialized. First +1 task dispatched!`, 'success');
-        setActiveJob(data.job);
+        addLog(`✅ SUCCESS: Started Job.`, 'success');
         if (activeTab === 'upload_script') {
             // Reset fields
             setScriptContent('');
@@ -225,17 +227,17 @@ const AutomationPanel: React.FC = () => {
     }
   };
 
-  const stopJob = async () => {
+  const stopJob = async (botId?: string) => {
     setUIState('stopping');
-    addLog(`Sending Emergency Stop command...`, 'warning');
+    addLog(botId ? `Sending Stop command for ${botId}...` : `Sending Emergency Stop command...`, 'warning');
     try {
       const res = await fetch('/api/admin/automation/job/stop', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ botId })
       });
       if (res.ok) {
-        addLog(`✅ FORCED STOP ACKNOWLEDGED BY SERVER`, 'error');
-        setActiveJob(null);
+        addLog(`✅ STOP ACKNOWLEDGED BY SERVER`, 'error');
       }
     } catch {
       addLog(`❌ Failed to stop job correctly.`, 'error');
@@ -284,7 +286,7 @@ const AutomationPanel: React.FC = () => {
             </label>
             <input 
                 type="number" min="1" max="60" placeholder="5" value={timer}
-                disabled={activeJob !== null} onChange={(e) => setTimer(e.target.value)}
+                disabled={isAnyJobActive} onChange={(e) => setTimer(e.target.value)}
                 className="w-full bg-black/60 border border-gray-700 rounded-lg px-4 py-3 text-white font-mono focus:border-accent-primary outline-none transition-colors disabled:opacity-50"
             />
             </div>
@@ -294,7 +296,7 @@ const AutomationPanel: React.FC = () => {
             </label>
             <input 
                 type="number" min="1" max="999" placeholder="10" value={targetCount}
-                disabled={activeJob !== null} onChange={(e) => setTargetCount(e.target.value)}
+                disabled={isAnyJobActive} onChange={(e) => setTargetCount(e.target.value)}
                 className="w-full bg-black/60 border border-gray-700 rounded-lg px-4 py-3 text-white font-mono focus:border-accent-primary outline-none transition-colors disabled:opacity-50"
             />
             </div>
@@ -305,7 +307,7 @@ const AutomationPanel: React.FC = () => {
             <Key className="w-3.5 h-3.5 text-accent-primary" /> Password Strategy
             </label>
             <select 
-            value={password} onChange={(e) => setPassword(e.target.value)} disabled={activeJob !== null}
+            value={password} onChange={(e) => setPassword(e.target.value)} disabled={isAnyJobActive}
             className="w-full bg-black/60 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-accent-primary outline-none transition-colors disabled:opacity-50 appearance-none"
             >
             <option value="gonabot@5414">gonabot@5414 (Strategy S)</option>
@@ -318,8 +320,8 @@ const AutomationPanel: React.FC = () => {
   const renderUploadSettings = () => (
     <>
         <div className="flex gap-2 mb-4 p-1 bg-black/40 rounded-lg border border-gray-800">
-            <button onClick={() => setUploadMode('single')} disabled={activeJob !== null} className={`flex-1 py-1.5 text-sm font-bold rounded-md transition-colors ${uploadMode === 'single' ? 'bg-accent-primary/20 text-accent-primary' : 'text-gray-500 hover:text-gray-300'}`}>Single Form</button>
-            <button onClick={() => setUploadMode('bulk')} disabled={activeJob !== null} className={`flex-1 py-1.5 text-sm font-bold rounded-md transition-colors ${uploadMode === 'bulk' ? 'bg-accent-primary/20 text-accent-primary' : 'text-gray-500 hover:text-gray-300'}`}>Bulk Text</button>
+            <button onClick={() => setUploadMode('single')} disabled={isAnyJobActive} className={`flex-1 py-1.5 text-sm font-bold rounded-md transition-colors ${uploadMode === 'single' ? 'bg-accent-primary/20 text-accent-primary' : 'text-gray-500 hover:text-gray-300'}`}>Single Form</button>
+            <button onClick={() => setUploadMode('bulk')} disabled={isAnyJobActive} className={`flex-1 py-1.5 text-sm font-bold rounded-md transition-colors ${uploadMode === 'bulk' ? 'bg-accent-primary/20 text-accent-primary' : 'text-gray-500 hover:text-gray-300'}`}>Bulk Text</button>
         </div>
 
         {uploadMode === 'single' ? (
@@ -329,7 +331,7 @@ const AutomationPanel: React.FC = () => {
                         <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-2 mb-1.5">
                              Title (A-Z, 0-9)
                         </label>
-                        <input type="text" placeholder="Script Name" value={title} onChange={(e) => setTitle(e.target.value)} disabled={activeJob !== null}
+                        <input type="text" placeholder="Script Name" value={title} onChange={(e) => setTitle(e.target.value)} disabled={isAnyJobActive}
                             className="w-full bg-black/60 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:border-accent-primary outline-none transition-colors"
                         />
                     </div>
@@ -338,10 +340,10 @@ const AutomationPanel: React.FC = () => {
                              Game ID
                         </label>
                         <div className="flex bg-black/60 border border-gray-700 rounded-lg overflow-hidden focus-within:border-accent-primary">
-                            <input type="text" placeholder="1234567" value={gameId} onChange={(e) => {setGameId(e.target.value); setIsGameValid(null);}} disabled={activeJob !== null}
+                            <input type="text" placeholder="1234567" value={gameId} onChange={(e) => {setGameId(e.target.value); setIsGameValid(null);}} disabled={isAnyJobActive}
                                 className="w-full bg-transparent px-4 py-2.5 text-white outline-none font-mono"
                             />
-                            <button onClick={verifyGameId} disabled={!gameId || verifyingGame || activeJob !== null} className="px-3 bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors disabled:opacity-50">
+                            <button onClick={verifyGameId} disabled={!gameId || verifyingGame || isAnyJobActive} className="px-3 bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors disabled:opacity-50">
                                 {verifyingGame ? <Activity className="w-4 h-4 animate-spin" /> : (isGameValid === true ? <Check className="w-4 h-4 text-emerald-400" /> : isGameValid === false ? <AlertTriangle className="w-4 h-4 text-red-500" /> : <Search className="w-4 h-4" />)}
                             </button>
                         </div>
@@ -352,7 +354,7 @@ const AutomationPanel: React.FC = () => {
                     <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-2 mb-1.5">
                         Script (Loadstring)
                     </label>
-                    <textarea placeholder='loadstring(game:HttpGet("..."))()' value={scriptContent} onChange={(e) => setScriptContent(e.target.value)} disabled={activeJob !== null}
+                    <textarea placeholder='loadstring(game:HttpGet("..."))()' value={scriptContent} onChange={(e) => setScriptContent(e.target.value)} disabled={isAnyJobActive}
                         className="w-full h-20 bg-black/60 border border-gray-700 rounded-lg px-4 py-3 text-white font-mono text-xs focus:border-accent-primary outline-none transition-colors resize-none"
                     ></textarea>
                 </div>
@@ -360,7 +362,7 @@ const AutomationPanel: React.FC = () => {
                     <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-2 mb-1.5">
                          Description
                     </label>
-                    <textarea placeholder='Optional text...' value={description} onChange={(e) => setDescription(e.target.value)} disabled={activeJob !== null}
+                    <textarea placeholder='Optional text...' value={description} onChange={(e) => setDescription(e.target.value)} disabled={isAnyJobActive}
                         className="w-full h-12 bg-black/60 border border-gray-700 rounded-lg px-4 py-2 text-white text-sm focus:border-accent-primary outline-none transition-colors resize-none"
                     ></textarea>
                 </div>
@@ -375,7 +377,7 @@ const AutomationPanel: React.FC = () => {
                     placeholder={'My Script\n1234\nloadstring(game:HttpGet("..."))()\n---\nAnother Script\n5678\nprint("hello")'} 
                     value={bulkText} 
                     onChange={(e) => setBulkText(e.target.value)} 
-                    disabled={activeJob !== null}
+                    disabled={isAnyJobActive}
                     className="w-full h-48 bg-black/60 border border-gray-700 rounded-xl px-4 py-3 text-white font-mono text-xs focus:border-accent-primary outline-none transition-colors resize-none"
                 ></textarea>
                 
@@ -397,7 +399,7 @@ const AutomationPanel: React.FC = () => {
                         placeholder="Applied to all bulk entries... (Supports multi-line)" 
                         value={defaultDesc} 
                         onChange={(e) => setDefaultDesc(e.target.value)} 
-                        disabled={activeJob !== null}
+                        disabled={isAnyJobActive}
                         className="w-full h-16 bg-black/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-accent-primary outline-none transition-colors resize-none"
                     ></textarea>
                 </div>
@@ -406,7 +408,7 @@ const AutomationPanel: React.FC = () => {
                         <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-2 mb-1.5">
                             <Clock className="w-3.5 h-3.5 text-accent-primary" /> Total Time (Min)
                         </label>
-                        <input type="number" min="1" max="60" placeholder="5" value={timer} disabled={activeJob !== null} onChange={(e) => setTimer(e.target.value)}
+                        <input type="number" min="1" max="60" placeholder="5" value={timer} disabled={isAnyJobActive} onChange={(e) => setTimer(e.target.value)}
                             className="w-full bg-black/60 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-accent-primary outline-none transition-colors"
                         />
                     </div>
@@ -417,7 +419,7 @@ const AutomationPanel: React.FC = () => {
                 <Key className="w-3.5 h-3.5 text-accent-primary" /> Pass Strategy (Aged Admin Accs)
                 </label>
                 <select 
-                value={password} onChange={(e) => setPassword(e.target.value)} disabled={activeJob !== null}
+                value={password} onChange={(e) => setPassword(e.target.value)} disabled={isAnyJobActive}
                 className="w-full bg-black/60 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white focus:border-accent-primary outline-none transition-colors appearance-none"
                 >
                 <option value="gonabot@5414">gonabot@5414 (Default)</option>
@@ -448,14 +450,14 @@ const AutomationPanel: React.FC = () => {
           <div className="flex gap-4 border-b border-gray-800">
              <button 
                 onClick={() => setActiveTab('create_email')} 
-                disabled={activeJob !== null}
+                disabled={isAnyJobActive}
                 className={`pb-3 px-2 text-sm font-bold uppercase tracking-wider transition-colors ${activeTab === 'create_email' ? 'text-accent-primary border-b-2 border-accent-primary' : 'text-gray-500 hover:text-gray-300'} disabled:opacity-50`}
              >
                  Email Engine
              </button>
              <button 
                 onClick={() => setActiveTab('upload_script')} 
-                disabled={activeJob !== null}
+                disabled={isAnyJobActive}
                 className={`pb-3 px-2 text-sm font-bold uppercase tracking-wider transition-colors ${activeTab === 'upload_script' ? 'text-pink-400 border-b-2 border-pink-400' : 'text-gray-500 hover:text-gray-300'} disabled:opacity-50`}
              >
                  Script Upload
@@ -470,7 +472,7 @@ const AutomationPanel: React.FC = () => {
                      {onlineBots.map((bot) => (
                          <button
                              key={bot}
-                             disabled={activeJob !== null}
+                             disabled={isAnyJobActive}
                              onClick={() => {
                                  if (selectedBots.includes(bot)) {
                                      setSelectedBots(selectedBots.filter(b => b !== bot));
@@ -506,56 +508,72 @@ const AutomationPanel: React.FC = () => {
             <div className="mt-5 pt-4 border-t border-gray-800 grid grid-cols-2 gap-4">
               <button 
                 onClick={startJob}
-                disabled={activeJob !== null || UIState === 'starting'}
-                className={`w-full group relative overflow-hidden px-4 py-3 rounded-xl text-md font-bold flex items-center justify-center gap-2 transition-all duration-300
-                  ${activeJob !== null ? 'bg-emerald-500/10 text-emerald-500/30 border border-emerald-500/10 cursor-not-allowed' : 
-                    'bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:border-emerald-500 hover:shadow-[0_0_20px_rgba(16,185,129,0.3)]'
+                disabled={UIState === 'starting' || isAnyJobActive}
+                className={`w-full group relative overflow-hidden px-4 py-3 rounded-xl text-md font-bold flex items-center justify-center gap-2 transition-colors duration-200
+                  ${isAnyJobActive ? 'bg-emerald-500/5 text-emerald-500/30 border border-emerald-500/10 cursor-not-allowed' : 
+                    'bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:border-emerald-500'
                   }`}
               >
                 <Play className="w-4 h-4 group-hover:scale-110 transition-transform" /> START ENGINE
               </button>
               
               <button 
-                onClick={stopJob}
-                disabled={activeJob === null || UIState === 'stopping'}
-                className={`w-full group relative overflow-hidden px-4 py-3 rounded-xl text-md font-bold flex items-center justify-center gap-2 transition-all duration-300
-                  ${activeJob === null ? 'bg-red-500/10 text-red-500/30 border border-red-500/10 cursor-not-allowed' : 
-                    'bg-red-500/20 hover:bg-red-500/40 border border-red-500 text-red-100 hover:shadow-[0_0_20px_rgba(239,68,68,0.5)]'
+                onClick={() => stopJob()} // Master stop
+                disabled={!isAnyJobActive || UIState === 'stopping'}
+                className={`w-full group relative overflow-hidden px-4 py-3 rounded-xl text-md font-bold flex items-center justify-center gap-2 transition-colors duration-200
+                  ${!isAnyJobActive ? 'bg-red-500/5 text-red-500/30 border border-red-500/10 cursor-not-allowed' : 
+                    'bg-red-500/20 hover:bg-red-500/40 border border-red-500 text-red-100'
                   }`}
               >
-                <Square className="w-4 h-4 group-hover:scale-110 transition-transform" /> ABORT
+                <Square className="w-4 h-4 group-hover:scale-110 transition-transform" /> STOP ALL
               </button>
             </div>
           </div>
 
-          {/* Live Job Summary Card */}
-          {(activeJob || jobSummary) && (
-            <div className={`p-4 rounded-xl border relative shadow-lg ${activeJob ? 'bg-blue-900/20 border-blue-500/40' : jobSummary.status === 'TIMEOUT' ? 'bg-orange-900/20 border-orange-500/40' : 'bg-emerald-900/20 border-emerald-500/40'}`}>
-               <h4 className="text-xs uppercase tracking-widest font-bold text-gray-400 mb-3 flex items-center justify-between">
-                 {activeJob ? `🔥 Running ${activeJob.type === 'upload' ? 'Upload' : 'Email'} Job` : '🏁 Job Summary'}
-                 {activeJob && <span className="flex w-2 h-2 bg-blue-400 rounded-full animate-ping mr-2"></span>}
-               </h4>
-               <div className="grid grid-cols-2 gap-y-4 font-mono text-sm">
-                 <div><span className="text-gray-500">Target:</span> <span className="text-white">{activeJob ? activeJob.targetCount : jobSummary.target} {activeTab === 'create_email' ? 'Emails' : 'Scripts'}</span></div>
-                 <div><span className="text-gray-500">Completed:</span> <span className="text-emerald-400 font-bold">{activeJob ? activeJob.completedCount : jobSummary.completed}</span></div>
-                 
-                 {activeJob && (
-                   <div className="col-span-2">
-                     <span className="text-gray-500">Progress:</span> 
-                     <div className="w-full bg-gray-800 rounded-full h-1.5 mt-2 overflow-hidden">
-                       <div className="bg-emerald-400 h-1.5 rounded-full transition-all" style={{width: `${Math.min(100, (activeJob.completedCount / activeJob.targetCount) * 100)}%`}}></div>
-                     </div>
-                   </div>
-                 )}
-                 {jobSummary && (
-                   <>
-                     <div><span className="text-gray-500">Status:</span> <span className="text-white bg-black/40 px-2 py-0.5 rounded">{jobSummary.status}</span></div>
-                     <div><span className="text-gray-500">Time Taken:</span> <span className="text-orange-300">{jobSummary.timeElapsed} mins</span></div>
-                   </>
-                 )}
-               </div>
-            </div>
-          )}
+          {/* Live Job Summary Cards (Rendered per Bot) */}
+          <div className="space-y-4">
+             {jobsStore.map((jobEntry, idx) => {
+               const bJob = jobEntry.job;
+               const bSum = jobEntry.summary;
+               if (!bJob && !bSum) return null;
+
+               return (
+                 <div key={jobEntry.botId || idx} className={`p-4 rounded-xl border relative shadow-xl transition-all ${bJob ? 'bg-blue-900/10 border-blue-500/30' : bSum?.status === 'TIMEOUT' ? 'bg-orange-900/10 border-orange-500/30' : 'bg-emerald-900/10 border-emerald-500/30'}`}>
+                    <h4 className="text-xs uppercase tracking-widest font-bold text-gray-400 mb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {bJob ? `🔥 Running on [${jobEntry.botId}]` : `🏁 Summary [${jobEntry.botId}]`}
+                      </div>
+                      
+                      {bJob && (
+                        <div className="flex items-center gap-3">
+                           <span className="flex w-2 h-2 bg-blue-400 rounded-full animate-ping"></span>
+                           <button onClick={() => stopJob(jobEntry.botId)} className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded border border-red-500/40 hover:bg-red-500/40 transition-colors">Abort</button>
+                        </div>
+                      )}
+                    </h4>
+                    <div className="grid grid-cols-2 gap-y-4 font-mono text-sm">
+                      <div><span className="text-gray-500">Target:</span> <span className="text-white">{bJob ? bJob.targetCount : bSum?.target}</span></div>
+                      <div><span className="text-gray-500">Completed:</span> <span className="text-emerald-400 font-bold">{bJob ? bJob.completedCount : bSum?.completed}</span></div>
+                      
+                      {bJob && (
+                        <div className="col-span-2">
+                          <span className="text-gray-500">Progress:</span> 
+                          <div className="w-full bg-gray-800 rounded-full h-1.5 mt-2 overflow-hidden">
+                            <div className="bg-emerald-400 h-1.5 rounded-full transition-all duration-300" style={{width: `${Math.min(100, (bJob.completedCount / bJob.targetCount) * 100)}%`}}></div>
+                          </div>
+                        </div>
+                      )}
+                      {!bJob && bSum && (
+                        <>
+                          <div><span className="text-gray-500">Status:</span> <span className="text-white bg-black/40 px-2 py-0.5 rounded">{bSum.status}</span></div>
+                          <div><span className="text-gray-500">Time Taken:</span> <span className="text-orange-300">{bSum.timeElapsed} mins</span></div>
+                        </>
+                      )}
+                    </div>
+                 </div>
+               );
+             })}
+          </div>
         </div>
 
         {/* Activity Logs */}
@@ -564,7 +582,7 @@ const AutomationPanel: React.FC = () => {
             <span className="text-xs font-bold text-gray-300 flex items-center gap-2 uppercase tracking-widest">
               <Activity className="w-4 h-4 text-accent-primary" /> Event Logs
             </span>
-            <div className={`w-2 h-2 rounded-full ${activeJob ? 'bg-blue-500 animate-ping' : 'bg-gray-600'}`} />
+            <div className={`w-2 h-2 rounded-full ${isAnyJobActive ? 'bg-blue-500 animate-pulse' : 'bg-gray-600'}`} />
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-3 font-mono text-[11px] no-scrollbar">
             {logs.length === 0 ? (

@@ -50,15 +50,15 @@ type User = {
 export default function UserDashboard() {
   const { user, token } = useAuthStore();
   const navigate = useNavigate();
-  const [activeTab, setActiveTabState] = useState<'inbox' | 'trash' | 'aliases' | 'restore'>(() => {
+  const [activeTab, setActiveTabState] = useState<'inbox' | 'trash' | 'aliases' | 'restore' | 'assigned'>(() => {
     const hash = window.location.hash.replace('#', '');
     if (hash === 'live-otp') return 'inbox';
-    return ['inbox', 'trash', 'aliases', 'restore'].includes(hash) ? (hash as any) : 'inbox';
+    return ['inbox', 'trash', 'aliases', 'restore', 'assigned'].includes(hash) ? (hash as any) : 'inbox';
   });
 
   const [liveMode, setLiveMode] = useState(() => window.location.hash === '#live-otp');
 
-  const setActiveTab = (tab: 'inbox' | 'trash' | 'aliases' | 'restore') => {
+  const setActiveTab = (tab: 'inbox' | 'trash' | 'aliases' | 'restore' | 'assigned') => {
     setActiveTabState(tab);
     setLiveMode(false);
     window.location.hash = tab;
@@ -79,7 +79,7 @@ export default function UserDashboard() {
       if (hash === 'live-otp') {
         setLiveMode(true);
         setActiveTabState('inbox');
-      } else if (['inbox', 'trash', 'aliases', 'restore'].includes(hash)) {
+      } else if (['inbox', 'trash', 'aliases', 'restore', 'assigned'].includes(hash)) {
         setLiveMode(false);
         setActiveTabState(hash as any);
       }
@@ -498,6 +498,24 @@ export default function UserDashboard() {
             )}
           </button>
           
+          {user?.isAdmin && (
+            <button
+              onClick={() => { setActiveTab('assigned'); setSelectedEmail(null); setIsSidebarOpen(false); }}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
+                activeTab === 'assigned' ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "text-gray-400 hover:bg-white/5 hover:text-white border border-transparent"
+              )}
+            >
+              <UserCircle2 className="w-4 h-4" />
+              Assigned
+              {aliases.filter(a => a.status === 'assigned' && !a.isDeleted).length > 0 && (
+                <span className="ml-auto bg-emerald-500/20 text-emerald-400 py-0.5 px-2 rounded-full text-xs font-bold">
+                  {aliases.filter(a => a.status === 'assigned' && !a.isDeleted).length}
+                </span>
+              )}
+            </button>
+          )}
+
           <button
             onClick={() => { setActiveTab('trash'); setSelectedEmail(null); setIsSidebarOpen(false); }}
             className={cn(
@@ -796,7 +814,7 @@ export default function UserDashboard() {
                     <h3 className="text-xl font-bold text-white tracking-tight">Email IDs</h3>
                   </div>
                   <div className="divide-y divide-premium-border">
-                    {aliases.filter(a => !a.isDeleted).length === 0 && !loading && !error ? (
+                    {aliases.filter(a => !a.isDeleted && a.status !== 'assigned').length === 0 && !loading && !error ? (
                       <div className="text-center py-32">
                         <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6 border border-premium-border">
                           <Database className="w-10 h-10 text-gray-500" />
@@ -805,7 +823,7 @@ export default function UserDashboard() {
                         <p className="text-gray-400 mt-2 font-medium">You don't have any email IDs yet.</p>
                       </div>
                     ) : (
-                      aliases.filter(a => !a.isDeleted).map((alias) => {
+                      aliases.filter(a => !a.isDeleted && a.status !== 'assigned').map((alias) => {
                         const timer = getTimerDisplay(alias.createdAt);
                         return (
                           <div key={alias._id} className="p-4 md:p-6 hover:bg-white/5 transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -941,6 +959,63 @@ export default function UserDashboard() {
                                 <RotateCcw className="w-4 h-4" />
                                 Restore
                               </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'assigned' && user?.isAdmin && (
+                <div className="glass-panel overflow-hidden">
+                  <div className="p-6 border-b border-premium-border flex justify-between items-center">
+                    <h3 className="text-xl font-bold text-white tracking-tight">Assigned Email IDs</h3>
+                  </div>
+                  <div className="divide-y divide-premium-border">
+                    {aliases.filter(a => a.status === 'assigned' && !a.isDeleted).length === 0 && !loading && !error ? (
+                      <div className="text-center py-32">
+                        <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6 border border-premium-border">
+                          <UserCircle2 className="w-10 h-10 text-gray-500" />
+                        </div>
+                        <h3 className="text-xl font-bold text-white tracking-tight">No Assigned IDs found</h3>
+                        <p className="text-gray-400 mt-2 font-medium">There are no actively assigned aliases right now.</p>
+                      </div>
+                    ) : (
+                      aliases.filter(a => a.status === 'assigned' && !a.isDeleted).map((alias) => {
+                        const timer = getTimerDisplay(alias.createdAt);
+                        return (
+                          <div key={alias._id} className="p-4 md:p-6 hover:bg-white/5 transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                            <div className="min-w-0 w-full sm:flex-1">
+                              <div className="flex flex-wrap items-center gap-2 md:gap-3 mb-2">
+                                <span className="font-bold text-white text-base md:text-lg truncate max-w-[200px] md:max-w-none" title={alias.alias}>{alias.alias}</span>
+                                <span className="shrink-0 px-2 py-0.5 rounded-full text-[10px] md:text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                  {alias.status.toUpperCase()}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 md:gap-3 text-[10px] md:text-sm mt-1">
+                                {alias.assignedTo && (
+                                  <span className="text-gray-400 truncate max-w-[150px] md:max-w-none">
+                                    Assigned to: <span className="text-white font-medium">{users.find(u => u._id === alias.assignedTo)?.email || 'Unknown User'}</span>
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-4 w-full sm:w-auto">
+                              <div className="flex items-center gap-2 flex-1 sm:flex-none">
+                                <select
+                                  value={alias.assignedTo || ''}
+                                  onChange={(e) => assignEmail(alias.alias, e.target.value)}
+                                  className="flex-1 sm:w-48 bg-black/50 border border-premium-border rounded-lg px-3 py-2 text-sm text-white focus:border-accent-primary outline-none transition-colors"
+                                >
+                                  <option value="">Unassigned</option>
+                                  {users.map(u => (
+                                    <option key={u._id} value={u._id}>{u.email}</option>
+                                  ))}
+                                </select>
+                              </div>
                             </div>
                           </div>
                         );
