@@ -245,13 +245,17 @@ async function startServer() {
         return res.status(404).json({ error: 'No OTP found' });
       }
 
-      const formattedOTPs = latestEmails.map(email => ({
-        email: email.recipientAlias,
-        otp: email.otp,
-        receivedAt: email.receivedAt,
-        from: email.from,
-        subject: email.subject
-      }));
+      const formattedOTPs = latestEmails.map(email => {
+        const isUrl = email.otp && email.otp.startsWith('http');
+        return {
+          email: email.recipientAlias,
+          otp: isUrl ? 'Click Link' : email.otp,
+          link: isUrl ? email.otp : null,
+          receivedAt: email.receivedAt,
+          from: email.from,
+          subject: email.subject
+        };
+      });
 
       // If only one is requested historically, we return the array. 
       // User can access formattedOTPs[0] for the absolute latest.
@@ -1098,16 +1102,39 @@ async function startServer() {
         parsedText = body;
       }
 
-      // Extract OTP
+      // Extract OTP or Magic Link
       let otp = null;
+      let displayLink = null;
       const searchText = parsedText || parsedHtml || body;
-      const keywordRegex = /(?:(?:otp|code|pin|password|verification|token)[\s\S]{0,150}?\b(?!(?:19|20)\d{2}\b)(\d{4,8})\b)|(?:\b(?!(?:19|20)\d{2}\b)(\d{4,8})\b[\s\S]{0,150}?(?:otp|code|pin|password|verification|token))/i;
-      const keywordMatch = searchText.match(keywordRegex);
-      if (keywordMatch) {
-        otp = keywordMatch[1] || keywordMatch[2];
-        console.log(`[EMAIL WEBHOOK] Extracted OTP: ${otp}`);
+      
+      const isRscriptsMessage = from && from.toLowerCase().includes('.rscripts.net');
+
+      if (isRscriptsMessage) {
+        // Look for the "Sign In" link (Magic Link)
+        const htmlSearchText = parsedHtml || parsedText || body;
+        
+        // Match link generally looking like rscripts.net/api/auth/magic-link/verify
+        const magicLinkRegex = /(https:\/\/(?:www\.)?rscripts\.net\/api\/auth\/magic-link\/verify\?token=[^\s"'<>]+)/i;
+        const linkMatch = htmlSearchText.match(magicLinkRegex);
+        
+        if (linkMatch) {
+            let rawLink = linkMatch[1];
+            // clean up HTML entities like &amp;
+            otp = rawLink.replace(/&amp;/g, '&');
+            console.log(`[EMAIL WEBHOOK] Extracted rscripts Magic Link: ${otp}`);
+        } else {
+            console.log(`[EMAIL WEBHOOK] No magic link found for rscripts.net email.`);
+        }
       } else {
-        console.log(`[EMAIL WEBHOOK] No OTP found in email content.`);
+        // Normal OTP extraction
+        const keywordRegex = /(?:(?:otp|code|pin|password|verification|token)[\s\S]{0,150}?\b(?!(?:19|20)\d{2}\b)(\d{4,8})\b)|(?:\b(?!(?:19|20)\d{2}\b)(\d{4,8})\b[\s\S]{0,150}?(?:otp|code|pin|password|verification|token))/i;
+        const keywordMatch = searchText.match(keywordRegex);
+        if (keywordMatch) {
+          otp = keywordMatch[1] || keywordMatch[2];
+          console.log(`[EMAIL WEBHOOK] Extracted OTP: ${otp}`);
+        } else {
+          console.log(`[EMAIL WEBHOOK] No OTP found in email content.`);
+        }
       }
 
       // Check or create EmailAlias to determine permanent status

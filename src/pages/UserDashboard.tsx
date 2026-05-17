@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Mail, Trash2, Copy, Power, RefreshCw, CheckCircle2, AlertCircle, ArrowLeft, UserCircle2, Menu, X, Database, Send, RotateCcw } from 'lucide-react';
+import { Mail, Trash2, Copy, Power, RefreshCw, CheckCircle2, AlertCircle, ArrowLeft, UserCircle2, Menu, X, Database, Send, RotateCcw, ExternalLink } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -31,6 +31,7 @@ const getTimerDisplay = (createdAt: string) => {
 type Email = {
   _id: string;
   otp: string | null;
+  link?: string | null;
   fullBody: string;
   htmlBody?: string;
   recipientAlias: string;
@@ -370,18 +371,30 @@ export default function UserDashboard() {
             </div>
             
             <div className="flex flex-col items-center gap-6 sm:gap-8">
-              <button
-                onClick={() => handleCopy(latestEmail.otp!)}
-                className={cn(
-                  "flex items-center gap-2 sm:gap-3 px-6 py-3 sm:px-8 sm:py-4 rounded-full text-base sm:text-lg font-semibold transition-all duration-200 active:scale-95",
-                  copied 
-                    ? "bg-emerald-500 text-white md:shadow-[0_0_20px_rgba(16,185,129,0.4)]" 
-                    : "bg-accent-primary text-white hover:bg-blue-600 md:shadow-[0_0_15px_rgba(59,130,246,0.5)]"
-                )}
-              >
-                {copied ? <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6" /> : <Copy className="w-5 h-5 sm:w-6 sm:h-6" />}
-                {copied ? "Copied to Clipboard" : "Copy OTP"}
-              </button>
+              {latestEmail.link ? (
+                <a
+                  href={latestEmail.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 sm:gap-3 px-6 py-3 sm:px-8 sm:py-4 rounded-full text-base sm:text-lg font-semibold transition-all duration-200 active:scale-95 bg-emerald-500 text-white hover:bg-emerald-600 md:shadow-[0_0_15px_rgba(16,185,129,0.5)]"
+                >
+                  <ExternalLink className="w-5 h-5 sm:w-6 sm:h-6" />
+                  Open Magic Link
+                </a>
+              ) : (
+                <button
+                  onClick={() => handleCopy(latestEmail.otp!)}
+                  className={cn(
+                    "flex items-center gap-2 sm:gap-3 px-6 py-3 sm:px-8 sm:py-4 rounded-full text-base sm:text-lg font-semibold transition-all duration-200 active:scale-95",
+                    copied 
+                      ? "bg-emerald-500 text-white md:shadow-[0_0_20px_rgba(16,185,129,0.4)]" 
+                      : "bg-accent-primary text-white hover:bg-blue-600 md:shadow-[0_0_15px_rgba(59,130,246,0.5)]"
+                  )}
+                >
+                  {copied ? <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6" /> : <Copy className="w-5 h-5 sm:w-6 sm:h-6" />}
+                  {copied ? "Copied to Clipboard" : "Copy OTP"}
+                </button>
+              )}
               
               <div className="flex items-center gap-3 text-gray-500 text-sm font-medium">
                 <span>For: <span className="text-gray-300">{latestEmail.recipientAlias}</span></span>

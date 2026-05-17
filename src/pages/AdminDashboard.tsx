@@ -343,7 +343,17 @@ export default function AdminDashboard() {
                     </div>
                   </div>
                   <div className="text-sm text-gray-400 mb-2">From: {e.from} | To: {e.recipientAlias}</div>
-                  <div className="text-sm text-gray-300 font-mono bg-black/80 p-3 rounded-lg border border-premium-border">{e.otp ? `OTP: ${e.otp}` : 'No OTP detected'}</div>
+                  <div className="text-sm text-gray-300 font-mono bg-black/80 p-3 rounded-lg border border-premium-border">
+                    {e.otp ? (
+                      e.otp.startsWith('http') ? (
+                        <a href={e.otp} target="_blank" rel="noopener noreferrer" className="text-brand-blue hover:underline break-all">
+                          🔗 Open Magic Link
+                        </a>
+                      ) : (
+                        `OTP: ${e.otp}`
+                      )
+                    ) : 'No OTP detected'}
+                  </div>
                 </div>
               ))}
               
@@ -432,7 +442,17 @@ export default function AdminDashboard() {
                       </div>
                     </div>
                     <div className="text-sm text-gray-400 mb-2">From: {e.from} | To: {e.recipientAlias}</div>
-                    <div className="text-sm text-gray-300 font-mono bg-black/80 p-3 rounded-lg border border-premium-border">{e.otp ? `OTP: ${e.otp}` : 'No OTP detected'}</div>
+                    <div className="text-sm text-gray-300 font-mono bg-black/80 p-3 rounded-lg border border-premium-border">
+                      {e.otp ? (
+                        e.otp.startsWith('http') ? (
+                          <a href={e.otp} target="_blank" rel="noopener noreferrer" className="text-brand-blue hover:underline break-all">
+                            🔗 Open Magic Link
+                          </a>
+                        ) : (
+                          `OTP: ${e.otp}`
+                        )
+                      ) : 'No OTP detected'}
+                    </div>
                   </div>
                 ))}
                 
