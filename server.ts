@@ -1113,24 +1113,15 @@ async function startServer() {
       let displayLink = null;
       const searchText = parsedText || parsedHtml || body;
       
-      const isRscriptsMessage = from && from.toLowerCase().includes('.rscripts.net');
+      const htmlSearchText = parsedHtml || parsedText || body;
+      const magicLinkRegex = /(https:\/\/(?:www\.)?rscripts\.net\/api\/auth\/magic-link\/verify\?token=[^\s"'<>]+)/i;
+      const rscriptsLinkMatch = htmlSearchText.match(magicLinkRegex);
 
-      if (isRscriptsMessage) {
-        // Look for the "Sign In" link (Magic Link)
-        const htmlSearchText = parsedHtml || parsedText || body;
-        
-        // Match link generally looking like rscripts.net/api/auth/magic-link/verify
-        const magicLinkRegex = /(https:\/\/(?:www\.)?rscripts\.net\/api\/auth\/magic-link\/verify\?token=[^\s"'<>]+)/i;
-        const linkMatch = htmlSearchText.match(magicLinkRegex);
-        
-        if (linkMatch) {
-            let rawLink = linkMatch[1];
-            // clean up HTML entities like &amp;
-            otp = rawLink.replace(/&amp;/g, '&');
-            console.log(`[EMAIL WEBHOOK] Extracted rscripts Magic Link: ${otp}`);
-        } else {
-            console.log(`[EMAIL WEBHOOK] No magic link found for rscripts.net email.`);
-        }
+      if (rscriptsLinkMatch) {
+        let rawLink = rscriptsLinkMatch[1];
+        // clean up HTML entities like &amp;
+        otp = rawLink.replace(/&amp;/g, '&');
+        console.log(`[EMAIL WEBHOOK] Extracted rscripts Magic Link: ${otp}`);
       } else {
         // Normal OTP extraction
         const keywordRegex = /(?:(?:otp|code|pin|password|verification|token)[\s\S]{0,150}?\b(?!(?:19|20)\d{2}\b)(\d{4,8})\b)|(?:\b(?!(?:19|20)\d{2}\b)(\d{4,8})\b[\s\S]{0,150}?(?:otp|code|pin|password|verification|token))/i;
