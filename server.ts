@@ -227,10 +227,16 @@ async function startServer() {
   // --- Live OTP API ---
   app.get('/api/live-otp/latest', authenticateToken, async (req: any, res) => {
     try {
-      let query: any = { assignedTo: req.user.id };
-      if (req.user.isAdmin) {
-        // Admins can see ALL recent live OTPs regardless of assignment or status
-        query = {}; 
+      let query: any = {};
+      if (!req.user.isAdmin) {
+        // Users can see their own OTPs, OR any OTPs that came via OFF mode (admin/unassigned)
+        query = {
+          $or: [
+            { assignedTo: req.user.id },
+            { status: 'admin' },
+            { assignedTo: null }
+          ]
+        };
       }
       
       // Find the latest 4 emails with an OTP
