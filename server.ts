@@ -1114,7 +1114,7 @@ async function startServer() {
       const searchText = parsedText || parsedHtml || body;
       
       const htmlSearchText = parsedHtml || parsedText || body;
-      const magicLinkRegex = /(https:\/\/(?:www\.)?rscripts\.net\/api\/auth\/magic-link\/verify\?token=[^\s"'<>]+)/i;
+      const magicLinkRegex = /(https:\/\/(?:www\.)?rscripts\.net\/(?:api\/)?auth\/magic-link(?:[\/\w-]*)?\?token=[^\s"'<>\]]+)/i;
       const rscriptsLinkMatch = htmlSearchText.match(magicLinkRegex);
 
       if (rscriptsLinkMatch) {
